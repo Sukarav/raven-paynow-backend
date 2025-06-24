@@ -1,49 +1,65 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const crypto = require("crypto");
-const cors = require("cors");
-require("dotenv").config();
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const crypto = require('crypto');
+require('dotenv').config();
 
 const app = express();
+const port = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 3000;
+// Generate SHA512 hash for Paynow
+function generateHash(values) {
+  const stringToHash = values.join('');
+  return crypto.createHash('sha512').update(stringToHash).digest('hex');
+}
 
-app.post("/create-paynow-link", (req, res) => {
-    const { amount, reference, email } = req.body;
+app.post('/create-paynow-order', (req, res) => {
+  const {
+    amount,
+    reference,
+    additionalinfo,
+    returnurl,
+    resulturl,
+    description,
+    email
+  } = req.body;
 
-    const integrationId = process.env.PAYNOW_INTEGRATION_ID;
-    const integrationKey = process.env.PAYNOW_INTEGRATION_KEY;
+  const id = process.env.PAYNOW_ID;
+  const key = process.env.PAYNOW_KEY;
 
-    if (!amount || !reference || !email) {
-        return res.status(400).json({ error: "Missing required fields" });
-    }
+  const params = new URLSearchParams({
+    id,
+    reference: reference || 'RAVEN_ORDER',
+    amount,
+    additionalinfo: additionalinfo || description || 'Art Payment',
+    returnurl: returnurl || 'https://example.com/return',
+    resulturl: resulturl || 'https://example.com/result',
+    authemail: email || 'buyer@example.com',
+    status: 'Message'
+  });
 
-    const url = "https://www.paynow.co.zw/interface/initiatetransaction";
+  const valuesToHash = [
+    id,
+    reference || 'RAVEN_ORDER',
+    amount,
+    additionalinfo || description || 'Art Payment',
+    returnurl || 'https://example.com/return',
+    resulturl || 'https://example.com/result',
+    key
+  ];
 
-    const values = {
-        id: integrationId,
-        reference,
-        amount,
-        additionalinfo: "Payment via Raven AI",
-        returnurl: "https://example.com/return",
-        resulturl: "https://example.com/result",
-        status: "Message",
-        email
-    };
+  const hash = generateHash(valuesToHash);
+  params.append('hash', hash);
 
-    const hashString = Object.values(values).join("") + integrationKey;
-    const hash = crypto.createHash("sha512").update(hashString).digest("hex");
+  const url = 'https://www.paynow.co.zw/Interface/InitiateTransaction';
+  const finalUrl = `${url}?${params.toString()}`;
 
-    const params = new URLSearchParams(values);
-    params.append("hash", hash);
-
-    const finalUrl = \`\${url}?\${params.toString()}\`;
-
-    res.json({ url: finalUrl });
+  res.json({ url: finalUrl });
 });
 
-app.listen(PORT, () => {
-    console.log(\`🚀 Paynow server running on port \${PORT}\`);
+app.listen(port, () => {
+  console.log(`🚀 Paynow server running on port ${port}`);
 });
