@@ -27,8 +27,8 @@ app.post('/create-paynow-order', (req, res) => {
     email
   } = req.body;
 
-  const id = process.env.PAYNOW_ID;
-  const key = process.env.PAYNOW_KEY;
+  const id = process.env.INTEGRATION_ID;
+  const key = process.env.INTEGRATION_KEY;
 
   const params = new URLSearchParams({
     id,
@@ -37,7 +37,7 @@ app.post('/create-paynow-order', (req, res) => {
     additionalinfo: additionalinfo || description || 'Art Payment',
     returnurl: returnurl || 'https://example.com/return',
     resulturl: resulturl || 'https://example.com/result',
-    authemail: email || 'buyer@example.com',
+    authemail: email || process.env.MERCHANT_EMAIL || 'buyer@example.com',
     status: 'Message'
   });
 
