@@ -11,7 +11,7 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// ✅ Official PayNow-compliant SHA512 uppercase hash
+// ✅ Generate PayNow-compliant UPPERCASE SHA512 hash
 function generateHash(id, reference, amount, info, returnUrl, resultUrl, key) {
   const rawString = `${id}${reference}${amount}${info}${returnUrl}${resultUrl}Message${key}`;
   console.log("🧪 Hash input string:", rawString);
@@ -50,17 +50,17 @@ app.post('/create-paynow-order', async (req, res) => {
     key
   );
 
-  const params = new URLSearchParams({
-    id,
-    reference: finalReference,
-    amount,
-    additionalinfo: finalInfo,
-    returnurl: finalReturn,
-    resulturl: finalResult,
-    authemail: finalEmail,
-    status: 'Message',
-    hash
-  });
+  // ✅ Correct parameter order matters!
+  const params = new URLSearchParams();
+  params.append('id', id);
+  params.append('reference', finalReference);
+  params.append('amount', amount);
+  params.append('additionalinfo', finalInfo);
+  params.append('returnurl', finalReturn);
+  params.append('resulturl', finalResult);
+  params.append('status', 'Message'); // Must match what's in the hash
+  params.append('authemail', finalEmail); // Only AFTER status
+  params.append('hash', hash); // Always last
 
   console.log("🚀 Sending to PayNow:", params.toString());
 
