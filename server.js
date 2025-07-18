@@ -50,17 +50,18 @@ app.post('/create-paynow-order', async (req, res) => {
     key
   );
 
-  // ✅ Correct parameter order matters!
-  const params = new URLSearchParams();
-  params.append('id', id);
-  params.append('reference', finalReference);
-  params.append('amount', amount);
-  params.append('additionalinfo', finalInfo);
-  params.append('returnurl', finalReturn);
-  params.append('resulturl', finalResult);
-  params.append('status', 'Message'); // Must match what's in the hash
-  params.append('authemail', finalEmail); // Only AFTER status
-  params.append('hash', hash); // Always last
+  // ✅ Fixed parameter order
+const params = new URLSearchParams();
+params.append('id', id);
+params.append('reference', finalReference);
+params.append('amount', amount);
+params.append('additionalinfo', finalInfo);
+params.append('returnurl', finalReturn);
+params.append('resulturl', finalResult);
+params.append('status', 'Message');           // ✅ BEFORE authemail
+params.append('authemail', finalEmail);
+params.append('hash', hash);                  // ✅ Always last
+
 
   console.log("🚀 Sending to PayNow:", params.toString());
 
