@@ -11,7 +11,7 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// ✅ STRICT HASHING (PayNow standard-compliant)
+// ✅ Official PayNow-compliant SHA512 uppercase hash
 function generateHash(id, reference, amount, info, returnUrl, resultUrl, key) {
   const rawString = `${id}${reference}${amount}${info}${returnUrl}${resultUrl}Message${key}`;
   console.log("🧪 Hash input string:", rawString);
@@ -67,7 +67,12 @@ app.post('/create-paynow-order', async (req, res) => {
   try {
     const response = await axios.post(
       'https://www.paynow.co.zw/Interface/InitiateTransaction',
-      params
+      params.toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
     );
 
     const responseData = new URLSearchParams(response.data);
