@@ -11,10 +11,11 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// Generate SHA512 hash for PayNow
-function generateHash(values) {
-  const stringToHash = values.join('');
-  return crypto.createHash('sha512').update(stringToHash).digest('hex');
+// Generate correct PayNow SHA512 hash
+function generateHash(id, reference, amount, info, returnUrl, resultUrl, key) {
+  const rawString = `${id}${reference}${amount}${info}${returnUrl}${resultUrl}${key}`;
+  console.log("🧪 Hashing string:", rawString); // For debug
+  return crypto.createHash('sha512').update(rawString).digest('hex');
 }
 
 app.post('/create-paynow-order', async (req, res) => {
@@ -37,7 +38,8 @@ app.post('/create-paynow-order', async (req, res) => {
   const finalResult = resulturl || 'https://example.com/result';
   const finalEmail = email || process.env.MERCHANT_EMAIL || 'buyer@example.com';
 
-  const valuesToHash = [
+  // ✅ Generate correct hash in the expected order
+  const hash = generateHash(
     id,
     finalReference,
     amount,
@@ -45,11 +47,8 @@ app.post('/create-paynow-order', async (req, res) => {
     finalReturn,
     finalResult,
     key
-  ];
+  );
 
-  const hash = generateHash(valuesToHash);
-
-  // Prepare form body
   const params = new URLSearchParams({
     id,
     reference: finalReference,
@@ -62,7 +61,7 @@ app.post('/create-paynow-order', async (req, res) => {
     hash
   });
 
-  console.log("🧪 Sending to PayNow:", params.toString());
+  console.log("🚀 Sending to PayNow:", params.toString());
 
   try {
     const response = await axios.post(
