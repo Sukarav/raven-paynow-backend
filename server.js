@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
@@ -16,7 +17,7 @@ function generateHash(values) {
   return crypto.createHash('sha512').update(stringToHash).digest('hex');
 }
 
-app.post('/create-paynow-order', (req, res) => {
+app.post('/create-paynow-order', async (req, res) => {
   const {
     amount,
     reference,
@@ -30,34 +31,58 @@ app.post('/create-paynow-order', (req, res) => {
   const id = process.env.INTEGRATION_ID;
   const key = process.env.INTEGRATION_KEY;
 
-  const params = new URLSearchParams({
-    id,
-    reference: reference || 'RAVEN_ORDER',
-    amount,
-    additionalinfo: additionalinfo || description || 'Art Payment',
-    returnurl: returnurl || 'https://example.com/return',
-    resulturl: resulturl || 'https://example.com/result',
-    authemail: email || process.env.MERCHANT_EMAIL || 'buyer@example.com',
-    status: 'Message'
-  });
+  const finalReference = reference || 'RAVEN_ORDER';
+  const finalInfo = additionalinfo || description || 'Art Payment';
+  const finalReturn = returnurl || 'https://example.com/return';
+  const finalResult = resulturl || 'https://example.com/result';
+  const finalEmail = email || process.env.MERCHANT_EMAIL || 'buyer@example.com';
 
   const valuesToHash = [
     id,
-    reference || 'RAVEN_ORDER',
+    finalReference,
     amount,
-    additionalinfo || description || 'Art Payment',
-    returnurl || 'https://example.com/return',
-    resulturl || 'https://example.com/result',
+    finalInfo,
+    finalReturn,
+    finalResult,
     key
   ];
 
   const hash = generateHash(valuesToHash);
-  params.append('hash', hash);
 
-  const url = 'https://www.paynow.co.zw/Interface/InitiateTransaction';
-  const finalUrl = `${url}?${params.toString()}`;
+  const params = new URLSearchParams({
+    id,
+    reference: finalReference,
+    amount,
+    additionalinfo: finalInfo,
+    returnurl: finalReturn,
+    resulturl: finalResult,
+    authemail: finalEmail,
+    status: 'Message',
+    hash
+  });
 
-  res.json({ url: finalUrl });
+  try {
+    const response = await axios.post(
+      'https://www.paynow.co.zw/Interface/InitiateTransaction',
+      params
+    );
+
+    const responseData = new URLSearchParams(response.data);
+    const browserUrl = responseData.get('browserurl');
+    const status = responseData.get('status');
+
+    if (status !== 'Ok' || !browserUrl) {
+      return res.status(500).json({
+        error: 'PayNow returned an error',
+        details: response.data
+      });
+    }
+
+    res.json({ url: browserUrl });
+  } catch (error) {
+    console.error('PayNow error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to create PayNow order' });
+  }
 });
 
 app.listen(port, () => {
