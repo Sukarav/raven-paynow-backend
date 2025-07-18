@@ -11,7 +11,7 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// Generate SHA512 hash for Paynow
+// Generate SHA512 hash for PayNow
 function generateHash(values) {
   const stringToHash = values.join('');
   return crypto.createHash('sha512').update(stringToHash).digest('hex');
@@ -49,6 +49,7 @@ app.post('/create-paynow-order', async (req, res) => {
 
   const hash = generateHash(valuesToHash);
 
+  // Prepare form body
   const params = new URLSearchParams({
     id,
     reference: finalReference,
@@ -61,6 +62,8 @@ app.post('/create-paynow-order', async (req, res) => {
     hash
   });
 
+  console.log("🧪 Sending to PayNow:", params.toString());
+
   try {
     const response = await axios.post(
       'https://www.paynow.co.zw/Interface/InitiateTransaction',
@@ -71,7 +74,10 @@ app.post('/create-paynow-order', async (req, res) => {
     const browserUrl = responseData.get('browserurl');
     const status = responseData.get('status');
 
+    console.log("📥 PayNow Response:", response.data);
+
     if (status !== 'Ok' || !browserUrl) {
+      console.error("❌ PayNow Error:", response.data);
       return res.status(500).json({
         error: 'PayNow returned an error',
         details: response.data
@@ -80,7 +86,7 @@ app.post('/create-paynow-order', async (req, res) => {
 
     res.json({ url: browserUrl });
   } catch (error) {
-    console.error('PayNow error:', error.response?.data || error.message);
+    console.error('🔥 Axios/PayNow failure:', error.response?.data || error.message);
     res.status(500).json({ error: 'Failed to create PayNow order' });
   }
 });
