@@ -11,16 +11,12 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// ✅ STRONG & CLEAN HASH FUNCTION
+// ✅ STRICT HASHING (PayNow standard-compliant)
 function generateHash(id, reference, amount, info, returnUrl, resultUrl, key) {
-  const rawString = `${id}${reference}${amount}${info}${returnUrl}${resultUrl}${key}`
-    .replace(/\s+/g, '')         // remove all spaces
-    .replace(/[^\x00-\x7F]/g, '') // remove invisible Unicode
-    .trim();                      // just in case
-
+  const rawString = `${id}${reference}${amount}${info}${returnUrl}${resultUrl}Message${key}`;
   console.log("🧪 Hash input string:", rawString);
-  const hash = crypto.createHash('sha512').update(rawString).digest('hex');
-  console.log("🔐 Generated hash:", hash);
+  const hash = crypto.createHash('sha512').update(rawString, 'utf8').digest('hex').toUpperCase();
+  console.log("🔐 Final Hash (UPPERCASE):", hash);
   return hash;
 }
 
