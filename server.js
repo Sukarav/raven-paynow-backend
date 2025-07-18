@@ -11,11 +11,17 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// Generate correct PayNow SHA512 hash
+// ✅ STRONG & CLEAN HASH FUNCTION
 function generateHash(id, reference, amount, info, returnUrl, resultUrl, key) {
-  const rawString = `${id}${reference}${amount}${info}${returnUrl}${resultUrl}${key}`;
-  console.log("🧪 Hashing string:", rawString); // For debug
-  return crypto.createHash('sha512').update(rawString).digest('hex');
+  const rawString = `${id}${reference}${amount}${info}${returnUrl}${resultUrl}${key}`
+    .replace(/\s+/g, '')         // remove all spaces
+    .replace(/[^\x00-\x7F]/g, '') // remove invisible Unicode
+    .trim();                      // just in case
+
+  console.log("🧪 Hash input string:", rawString);
+  const hash = crypto.createHash('sha512').update(rawString).digest('hex');
+  console.log("🔐 Generated hash:", hash);
+  return hash;
 }
 
 app.post('/create-paynow-order', async (req, res) => {
@@ -38,7 +44,6 @@ app.post('/create-paynow-order', async (req, res) => {
   const finalResult = resulturl || 'https://example.com/result';
   const finalEmail = email || process.env.MERCHANT_EMAIL || 'buyer@example.com';
 
-  // ✅ Generate correct hash in the expected order
   const hash = generateHash(
     id,
     finalReference,
