@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
-const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
@@ -11,12 +10,11 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// ✅ Hash Generator
+// ✅ Correct hash generator (excluding authemail and hash itself)
 function generateHash(values, integrationKey) {
   const rawString = values.join('') + integrationKey;
-  console.log("🧪 Raw string for hash:", rawString);
   const hash = crypto.createHash('sha512').update(rawString, 'utf8').digest('hex');
-  return hash.toUpperCase();
+  return hash.toUpperCase(); // ✅ Must be UPPERCASE for PayNow
 }
 
 app.post('/create-paynow-order', async (req, res) => {
@@ -31,20 +29,22 @@ app.post('/create-paynow-order', async (req, res) => {
       email
     } = req.body;
 
-    // ✅ SUKARAV Credentials
-    const id = "21458";
-    const key = "a35a82b3-aa73-4839-90bd-aa2eb655c9de";
-    const authemail = email || "sukaravtech@gmail.com";
+    const id = process.env.INTEGRATION_ID;
+    const key = process.env.INTEGRATION_KEY;
 
-    const ref       = reference || "RAVEN_ORDER";
-    const info      = additionalinfo || description || "Glow Preview";
-    const returnUrl = returnurl || "https://sukaravtech.art/success";
-    const resultUrl = resulturl || "https://sukaravtech.art/paynow-status";
-    const status    = "Message";
+    const ref = reference || 'RAVEN_ORDER';
+    const info = additionalinfo || description || 'Art Payment';
+    const returnUrl = returnurl || 'https://sukaravtech.art/success';
+    const resultUrl = resulturl || 'https://sukaravtech.art/paynow-status';
+    const status = 'Message';
+    const authemail = email || process.env.MERCHANT_EMAIL || 'sukaravtech@gmail.com';
 
-    // ✅ Hash values in exact order
-    const hashFields = [id, ref, amount, info, returnUrl, resultUrl, status];
-    const hash = generateHash(hashFields, key);
+    // ✅ Proper hash string (NO authemail)
+    const valuesToHash = [id, ref, amount, info, returnUrl, resultUrl, status];
+    const hash = generateHash(valuesToHash, key);
+
+    console.log('🧪 Raw string for hash:', valuesToHash.join(''));
+    console.log('🔒 Final Hash (UPPERCASE):', hash);
 
     const params = new URLSearchParams();
     params.append('id', id);
@@ -54,11 +54,12 @@ app.post('/create-paynow-order', async (req, res) => {
     params.append('returnurl', returnUrl);
     params.append('resulturl', resultUrl);
     params.append('status', status);
-    params.append('authemail', authemail);
+    params.append('authemail', authemail); // ✅ Present in payload, NOT in hash
     params.append('hash', hash);
 
     console.log('🚀 Sending to PayNow:', params.toString());
 
+    const axios = require('axios');
     const response = await axios.post(
       'https://www.paynow.co.zw/Interface/InitiateTransaction',
       params
@@ -71,17 +72,18 @@ app.post('/create-paynow-order', async (req, res) => {
     console.log('📥 PayNow Response:', response.data);
 
     if (statusResp !== 'Ok' || !browserUrl) {
-      return res.status(500).json({ error: 'PayNow error', details: response.data });
+      console.error('❌ PayNow Error:', response.data);
+      return res.status(500).json({ error: 'PayNow returned an error', details: response.data });
     }
 
     res.json({ url: browserUrl });
 
   } catch (error) {
-    console.error('🔥 Error:', error?.response?.data || error.message);
-    res.status(500).json({ error: 'Internal error', details: error.message });
+    console.error('🔥 Internal error during PayNow flow:', error?.response?.data || error.message);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Raven PayNow server running on port ${port}`);
+  console.log(`🚀 Raven Paynow server running on port ${port}`);
 });
