@@ -46,6 +46,10 @@ function generatePaynowHash(params, integrationKey) {
     // 3. Append Integration Key
     signatureString += integrationKey;
 
+    // --- DEBUGGING LOG ---
+    console.log(`[${new Date().toISOString()}] DEBUG: String for hash generation: "${signatureString}"`);
+    // --- END DEBUGGING LOG ---
+
     // 4. Compute SHA-512 hash and convert to uppercase hexadecimal
     const hash = crypto.createHash('sha512').update(signatureString).digest('hex').toUpperCase();
     return hash;
@@ -92,15 +96,15 @@ app.post('/api/paynow/initiate', async (req, res) => {
 
         console.log(`[${new Date().toISOString()}] Initiating transaction for reference: ${reference}, amount: ${amount}`);
         // console.log("Parameters sent to Paynow (excluding key):", paynowParams); // Uncomment for debugging
-        // console.log("String for hash generation:", Object.keys(paynowParams).sort().map(k => paynowParams[k]).join('') + PAYNOW_INTEGRATION_KEY); // Uncomment for deep debugging
 
 
-        // Using 'remotetransaction' endpoint for initiation
-        const paynowResponse = await axios.post(`${PAYNOW_API_BASE_URL}remotetransaction`, formData.toString(), {
+        // --- CRUCIAL CHANGE: Reverting to 'InitiateTransaction' for live ---
+        const paynowResponse = await axios.post(`${PAYNOW_API_BASE_URL}InitiateTransaction`, formData.toString(), {
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
         });
+        // --- END CRUCIAL CHANGE ---
 
         // Parse Paynow's response (it's often URL-encoded form data in the response body)
         const paynowResponseData = new URLSearchParams(paynowResponse.data);
