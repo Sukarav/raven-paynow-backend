@@ -59,7 +59,7 @@ app.post('/create-paynow-order', async (req, res) => {
     params.append('authemail', authemail); // ✅ included in request body
     params.append('hash', hash); // ✅ last in order
 
-    console.log('🚀 Final Params Sent to Paynow:', params.toString());
+    console.log('🧪 CLEAN STRING BEFORE HASH:', valuesToHash.join(''));
 
     const response = await axios.post('https://www.paynow.co.zw/Interface/InitiateTransaction', params);
     const data = new URLSearchParams(response.data);
