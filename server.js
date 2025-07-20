@@ -54,22 +54,22 @@ app.post('/create-paynow-order', async (req, res) => {
     const resultUrl = safeDecode(resulturl || 'https://sukaravtech.art/paynow-status');
     const status = 'Message';
 
-    // ✅ Hash computation (Paynow expects this exact order)
+    // ✅ Clean values (do not encode for hashing)
     const valuesToHash = [id, ref, amount, info, returnUrl, resultUrl, status];
     const hash = generateHash(valuesToHash, key);
 
-    // ✅ Build request payload
+    // ✅ Send encoded values in request
     const params = new URLSearchParams();
     params.append('id', id);
     params.append('reference', ref);
     params.append('amount', amount);
     params.append('additionalinfo', info);
-    params.append('returnurl', returnUrl);
-    params.append('resulturl', resultUrl);
+    params.append('returnurl', encodeURIComponent(returnUrl));
+    params.append('resulturl', encodeURIComponent(resultUrl));
     params.append('status', status);
     params.append('authemail', authemail);
     params.append('hash', hash);
-
+    
     console.log('\n🧪 Final Params Sent to Paynow:', params.toString());
 
     // ✅ Make Paynow request
