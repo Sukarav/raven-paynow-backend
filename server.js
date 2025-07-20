@@ -46,26 +46,22 @@ app.post('/create-paynow-order', async (req, res) => {
     const ref = reference || 'RAVEN_ORDER';
     const info = additionalinfo || description || 'Art Payment';
 
-    // ✅ Use constants to avoid frontend encoding issues
     const returnUrlRaw = 'https://sukaravtech.art/success';
     const resultUrlRaw = 'https://sukaravtech.art/paynow-status';
-    const status = 'Message';
 
-    // ✅ Create hash from raw values
     const valuesToHash = [id, ref, amount, info, returnUrlRaw, resultUrlRaw, status];
     const hash = generateHash(valuesToHash, key);
 
-    // ✅ Build POST body
     const params = new URLSearchParams();
     params.append('id', id);
     params.append('reference', ref);
     params.append('amount', amount);
     params.append('additionalinfo', info);
-    params.append('returnurl', returnUrlRaw);
-    params.append('resulturl', resultUrlRaw);
+    params.append('returnurl', returnUrlRaw);      // ✅ RAW VALUE (not encoded)
+    params.append('resulturl', resultUrlRaw);      // ✅ RAW VALUE (not encoded)
     params.append('status', status);
-    params.append('authemail', authemail);  // ✅ present in payload
-    params.append('hash', hash);            // ✅ must be last
+    params.append('authemail', authemail);
+    params.append('hash', hash);
 
     console.log('\n🚀 Final Parameters Sent to Paynow:\n' + params.toString());
 
