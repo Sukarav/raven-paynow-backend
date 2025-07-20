@@ -11,12 +11,14 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// ✅ Correct hash generator (excluding authemail and hash itself)
+// ✅ Correct SHA512 hash generator (excluding authemail and hash from input)
 function generateHash(values, integrationKey) {
   const rawString = values.join('');
-  console.log('🪵 Raw string to hash:', rawString + integrationKey);
-  const hash = crypto.createHash('sha512').update(rawString + integrationKey, 'utf8').digest('hex');
-  return hash.toUpperCase(); // ✅ Must be UPPERCASE
+  const finalString = rawString + integrationKey;
+
+  console.log('🪵 Raw string to hash:', finalString); // Debug line
+  const hash = crypto.createHash('sha512').update(finalString, 'utf8').digest('hex');
+  return hash.toUpperCase();
 }
 
 app.post('/create-paynow-order', async (req, res) => {
@@ -31,9 +33,9 @@ app.post('/create-paynow-order', async (req, res) => {
       email
     } = req.body;
 
-    const id = process.env.INTEGRATION_ID;
-    const key = process.env.INTEGRATION_KEY;
-    const merchantEmail = email || process.env.MERCHANT_EMAIL;
+    const id = process.env.PAYNOW_INTEGRATION_ID;
+    const key = process.env.PAYNOW_INTEGRATION_KEY;
+    const authemail = email || process.env.MERCHANT_EMAIL;
 
     const ref = reference || 'RAVEN_ORDER';
     const info = additionalinfo || description || 'Art Payment';
@@ -52,8 +54,8 @@ app.post('/create-paynow-order', async (req, res) => {
     params.append('returnurl', returnUrl);
     params.append('resulturl', resultUrl);
     params.append('status', status);
-    params.append('authemail', merchantEmail); // ✅ Included in payload
-    params.append('hash', hash);
+    params.append('authemail', authemail); // ✅ included in request body
+    params.append('hash', hash); // ✅ last in order
 
     console.log('🚀 Final Params Sent to Paynow:', params.toString());
 
