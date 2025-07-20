@@ -11,16 +11,25 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// ✅ Correct SHA512 hash generator (excluding authemail and hash from input)
+// ✅ Hash function (excludes authemail + hash field)
 function generateHash(values, integrationKey) {
   const rawString = values.join('');
   const finalString = rawString + integrationKey;
 
   console.log('\n🔍 RAW STRING TO HASH (BEFORE HASHING):');
-  console.log(finalString); // print exactly what's being hashed
+  console.log(finalString); // for debugging
 
   const hash = crypto.createHash('sha512').update(finalString, 'utf8').digest('hex');
-  return hash.toUpperCase();
+  return hash.toUpperCase(); // required by Paynow
+}
+
+// ✅ Safe decoding function to avoid decodeURIComponent crash
+function safeDecode(url) {
+  try {
+    return decodeURIComponent(url);
+  } catch {
+    return url;
+  }
 }
 
 app.post('/create-paynow-order', async (req, res) => {
@@ -41,13 +50,15 @@ app.post('/create-paynow-order', async (req, res) => {
 
     const ref = reference || 'RAVEN_ORDER';
     const info = additionalinfo || description || 'Art Payment';
-    const returnUrl = decodeURIComponent(returnurl || 'https://sukaravtech.art/success');
-    const resultUrl = decodeURIComponent(resulturl || 'https://sukaravtech.art/paynow-status');
+    const returnUrl = safeDecode(returnurl || 'https://sukaravtech.art/success');
+    const resultUrl = safeDecode(resulturl || 'https://sukaravtech.art/paynow-status');
     const status = 'Message';
 
+    // ✅ Hash computation (Paynow expects this exact order)
     const valuesToHash = [id, ref, amount, info, returnUrl, resultUrl, status];
     const hash = generateHash(valuesToHash, key);
 
+    // ✅ Build request payload
     const params = new URLSearchParams();
     params.append('id', id);
     params.append('reference', ref);
@@ -56,17 +67,18 @@ app.post('/create-paynow-order', async (req, res) => {
     params.append('returnurl', returnUrl);
     params.append('resulturl', resultUrl);
     params.append('status', status);
-    params.append('authemail', authemail); // ✅ included in request body
-    params.append('hash', hash); // ✅ last in order
+    params.append('authemail', authemail);
+    params.append('hash', hash);
 
-    console.log('🧪 CLEAN STRING BEFORE HASH:', valuesToHash.join(''));
+    console.log('\n🧪 Final Params Sent to Paynow:', params.toString());
 
+    // ✅ Make Paynow request
     const response = await axios.post('https://www.paynow.co.zw/Interface/InitiateTransaction', params);
     const data = new URLSearchParams(response.data);
     const browserUrl = data.get('browserurl');
     const statusResp = data.get('status');
 
-    console.log('📥 Paynow Raw Response:', response.data);
+    console.log('\n📥 Paynow Raw Response:', response.data);
 
     if (statusResp !== 'Ok' || !browserUrl) {
       console.error('❌ Paynow Error:', response.data);
@@ -76,7 +88,7 @@ app.post('/create-paynow-order', async (req, res) => {
     res.json({ url: browserUrl });
 
   } catch (error) {
-    console.error('🔥 Internal error:', error?.response?.data || error.message);
+    console.error('\n🔥 Internal server error:', error?.response?.data || error.message);
     res.status(500).json({ error: 'Server error', details: error.message });
   }
 });
