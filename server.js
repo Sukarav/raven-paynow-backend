@@ -11,23 +11,22 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// ✅ Correct SHA512 hash generator
+// ✅ SHA512 hash generator (raw values, no encoding)
 function generateHash(values, integrationKey) {
-  const rawString = values.join('');
-  const finalString = rawString + integrationKey;
-  console.log('🔍 Raw String for Hash:', finalString);
-  const hash = crypto.createHash('sha512').update(finalString, 'utf8').digest('hex');
-  return hash.toUpperCase();
+  const rawString = values.join('') + integrationKey;
+  console.log('\n🔍 STRING TO HASH (RAW):');
+  console.log(rawString);
+  return crypto.createHash('sha512').update(rawString, 'utf8').digest('hex').toUpperCase();
 }
 
 app.post('/create-paynow-order', async (req, res) => {
   try {
     const {
       amount,
-      reference = 'RAVEN_ORDER',
-      additionalinfo = 'Art Payment',
-      returnurl = 'https://sukaravtech.art/success',
-      resulturl = 'https://sukaravtech.art/paynow-status',
+      reference,
+      additionalinfo,
+      returnurl,
+      resulturl,
       description,
       email
     } = req.body;
@@ -36,57 +35,51 @@ app.post('/create-paynow-order', async (req, res) => {
     const key = process.env.PAYNOW_INTEGRATION_KEY;
     const authemail = email || process.env.MERCHANT_EMAIL;
 
-    const formattedAmount = parseFloat(amount).toFixed(2);
+    const ref = reference || 'RAVEN_ORDER';
+    const info = additionalinfo || description || 'Art Payment';
+    const returnUrl = returnurl || 'https://sukaravtech.art/success';
+    const resultUrl = resulturl || 'https://sukaravtech.art/paynow-status';
+    const status = 'Message';
+    const formattedAmount = parseFloat(amount).toFixed(2); // ensures 2 decimal places
 
-    const valuesToHash = [
-      id,
-      reference,
-      formattedAmount,
-      additionalinfo || description,
-      returnurl,
-      resulturl,
-      'Message'
-    ];
-
+    // ✅ Raw string for hash
+    const valuesToHash = [id, ref, formattedAmount, info, returnUrl, resultUrl, status];
     const hash = generateHash(valuesToHash, key);
 
-    const params = new URLSearchParams({
-      id,
-      reference,
-      amount: formattedAmount,
-      additionalinfo: additionalinfo || description,
-      returnurl,
-      resulturl,
-      status: 'Message',
-      authemail,
-      hash
-    });
+    // ✅ Final POST payload (no encoding!)
+    const params = new URLSearchParams();
+    params.append('id', id);
+    params.append('reference', ref);
+    params.append('amount', formattedAmount);
+    params.append('additionalinfo', info);
+    params.append('returnurl', returnUrl);
+    params.append('resulturl', resultUrl);
+    params.append('status', status);
+    params.append('authemail', authemail);
+    params.append('hash', hash);
 
-    console.log('📦 Final Parameters Sent to Paynow:', params.toString());
+    console.log('\n🚀 Final Parameters Sent to Paynow:');
+    console.log(params.toString());
 
+    // 🔁 Submit request to PayNow
     const response = await axios.post('https://www.paynow.co.zw/Interface/InitiateTransaction', params);
     const data = new URLSearchParams(response.data);
     const browserUrl = data.get('browserurl');
     const statusResp = data.get('status');
 
-    console.log('📥 Paynow Raw Response:', response.data);
+    console.log('\n📥 Paynow Raw Response:');
+    console.log(response.data);
 
     if (statusResp !== 'Ok' || !browserUrl) {
       console.error('❌ Paynow Error:', response.data);
-      return res.status(500).json({ 
-        error: 'Paynow returned an error', 
-        details: response.data 
-      });
+      return res.status(500).json({ error: 'Paynow returned an error', details: response.data });
     }
 
     res.json({ url: browserUrl });
 
   } catch (error) {
-    console.error('🔥 Internal Server Error:', error.message);
-    res.status(500).json({ 
-      error: 'Internal Server Error', 
-      details: error.message 
-    });
+    console.error('🔥 Internal error:', error?.response?.data || error.message);
+    res.status(500).json({ error: 'Server error', details: error.message });
   }
 });
 
