@@ -79,6 +79,11 @@ app.post('/create-paynow-order', async (req, res) => {
   }
 });
 
+console.log("🔍 DEBUG: ENV CHECK");
+console.log("🔍 PAYNOW_INTEGRATION_ID:", process.env.PAYNOW_INTEGRATION_ID);
+console.log("🔍 PAYNOW_INTEGRATION_KEY:", process.env.PAYNOW_INTEGRATION_KEY);
+console.log("🔍 MERCHANT_EMAIL:", process.env.MERCHANT_EMAIL);
+
 app.listen(port, () => {
   console.log(`🟢 Raven Paynow server running on port ${port}`);
 });
