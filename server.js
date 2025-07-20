@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3000; // Use Render's PORT or default to 3000 l
 // Paynow API credentials and base URL
 const PAYNOW_INTEGRATION_ID = process.env.PAYNOW_INTEGRATION_ID;
 const PAYNOW_INTEGRATION_KEY = process.env.PAYNOW_INTEGRATION_KEY;
-const PAYNOW_API_BASE_URL = process.env.PAYNOW_API_BASE_URL; // e.g., 'https://developers.paynow.co.zw/Interface/'
+const PAYNOW_API_BASE_URL = process.env.PAYNOW_API_BASE_URL; // e.g., 'https://www.paynow.co.zw/Interface/'
 
 if (!PAYNOW_INTEGRATION_ID || !PAYNOW_INTEGRATION_KEY || !PAYNOW_API_BASE_URL) {
     console.error(`[${new Date().toISOString()}] Error: Paynow environment variables are not set. Please check your .env file or Render environment settings.`);
@@ -95,13 +95,12 @@ app.post('/api/paynow/initiate', async (req, res) => {
         // console.log("String for hash generation:", Object.keys(paynowParams).sort().map(k => paynowParams[k]).join('') + PAYNOW_INTEGRATION_KEY); // Uncomment for deep debugging
 
 
-        // --- CRUCIAL CHANGE: Using 'remotetransaction' endpoint ---
+        // Using 'remotetransaction' endpoint for initiation
         const paynowResponse = await axios.post(`${PAYNOW_API_BASE_URL}remotetransaction`, formData.toString(), {
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
         });
-        // --- END CRUCIAL CHANGE ---
 
         // Parse Paynow's response (it's often URL-encoded form data in the response body)
         const paynowResponseData = new URLSearchParams(paynowResponse.data);
