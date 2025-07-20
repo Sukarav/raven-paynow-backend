@@ -1,31 +1,6 @@
-const express = require('express');
-const cors = require('cors');
-const bodyParser = require('body-parser');
-const crypto = require('crypto');
-const axios = require('axios');
-require('dotenv').config();
-
-const app = express();
-const port = process.env.PORT || 3000;
-
-app.use(cors());
-app.use(bodyParser.json());
-
-// ✅ Correct SHA512 hash generator (excluding authemail and hash from input)
-function generateHash(values, integrationKey) {
-  const rawString = values.join('');
-  const finalString = rawString + integrationKey;
-
-  console.log('\n🔍 RAW STRING TO HASH (BEFORE HASHING):');
-  console.log(finalString); // full string used for hashing
-
-  const hash = crypto.createHash('sha512').update(finalString, 'utf8').digest('hex');
-  return hash.toUpperCase();
-}
-
 app.post('/create-paynow-order', async (req, res) => {
   try {
-    const {
+    let {
       amount,
       reference,
       additionalinfo,
@@ -35,36 +10,34 @@ app.post('/create-paynow-order', async (req, res) => {
       email
     } = req.body;
 
+    // ✅ Clean the amount to 2 decimal places (e.g., "2.69")
+    amount = parseFloat(amount).toFixed(2);
+
     const id = process.env.PAYNOW_INTEGRATION_ID;
     const key = process.env.PAYNOW_INTEGRATION_KEY;
     const authemail = email || process.env.MERCHANT_EMAIL;
 
     const ref = reference || 'RAVEN_ORDER';
     const info = additionalinfo || description || 'Art Payment';
-
-    // ✅ Use raw URLs (not encoded)
-    const returnUrlRaw = returnurl || 'https://sukaravtech.art/success';
-    const resultUrlRaw = resulturl || 'https://sukaravtech.art/paynow-status';
-
+    const returnUrlRaw = 'https://sukaravtech.art/success';
+    const resultUrlRaw = 'https://sukaravtech.art/paynow-status';
     const status = 'Message';
 
-    // ✅ Raw string used for hashing (NO encoding!)
     const valuesToHash = [id, ref, amount, info, returnUrlRaw, resultUrlRaw, status];
     const hash = generateHash(valuesToHash, key);
 
-    // ✅ Parameters sent to Paynow (NO encoding here either)
     const params = new URLSearchParams();
     params.append('id', id);
     params.append('reference', ref);
     params.append('amount', amount);
     params.append('additionalinfo', info);
-    params.append('returnurl', returnUrlRaw);  // ✅ Raw, not encoded
-    params.append('resulturl', resultUrlRaw);  // ✅ Raw, not encoded
+    params.append('returnurl', returnUrlRaw);
+    params.append('resulturl', resultUrlRaw);
     params.append('status', status);
-    params.append('authemail', authemail);     // ✅ Not included in hash, but required in payload
+    params.append('authemail', authemail);
     params.append('hash', hash);
 
-    console.log('🚀 Final Params Sent to Paynow:', params.toString());
+    console.log('🧪 Final Params Sent to Paynow:', params.toString());
 
     const response = await axios.post('https://www.paynow.co.zw/Interface/InitiateTransaction', params);
     const data = new URLSearchParams(response.data);
@@ -84,8 +57,4 @@ app.post('/create-paynow-order', async (req, res) => {
     console.error('🔥 Internal error:', error?.response?.data || error.message);
     res.status(500).json({ error: 'Server error', details: error.message });
   }
-});
-
-app.listen(port, () => {
-  console.log(`🟢 Raven Paynow server running on port ${port}`);
 });
