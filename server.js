@@ -12,10 +12,10 @@ const PORT = process.env.PORT || 3000; // Use Render's PORT or default to 3000 l
 // Paynow API credentials and base URL
 const PAYNOW_INTEGRATION_ID = process.env.PAYNOW_INTEGRATION_ID;
 const PAYNOW_INTEGRATION_KEY = process.env.PAYNOW_INTEGRATION_KEY;
-const PAYNOW_API_BASE_URL = process.env.PAYNOW_API_BASE_URL;
+const PAYNOW_API_BASE_URL = process.env.PAYNOW_API_BASE_URL; // e.g., 'https://developers.paynow.co.zw/Interface/'
 
 if (!PAYNOW_INTEGRATION_ID || !PAYNOW_INTEGRATION_KEY || !PAYNOW_API_BASE_URL) {
-    console.error("Error: Paynow environment variables are not set. Please check your .env file or Render environment settings.");
+    console.error(`[${new Date().toISOString()}] Error: Paynow environment variables are not set. Please check your .env file or Render environment settings.`);
     process.exit(1); // Exit if critical variables are missing
 }
 
@@ -95,12 +95,13 @@ app.post('/api/paynow/initiate', async (req, res) => {
         // console.log("String for hash generation:", Object.keys(paynowParams).sort().map(k => paynowParams[k]).join('') + PAYNOW_INTEGRATION_KEY); // Uncomment for deep debugging
 
 
-        // Make the POST request to Paynow's InitiateTransaction endpoint
-        const paynowResponse = await axios.post(`${PAYNOW_API_BASE_URL}InitiateTransaction`, formData.toString(), {
+        // --- CRUCIAL CHANGE: Using 'remotetransaction' endpoint ---
+        const paynowResponse = await axios.post(`${PAYNOW_API_BASE_URL}remotetransaction`, formData.toString(), {
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
         });
+        // --- END CRUCIAL CHANGE ---
 
         // Parse Paynow's response (it's often URL-encoded form data in the response body)
         const paynowResponseData = new URLSearchParams(paynowResponse.data);
@@ -297,8 +298,8 @@ app.get('/', (req, res) => {
 
 // Start the server
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Paynow API Base URL: ${PAYNOW_API_BASE_URL}`);
-    console.log(`Live Service URL (Render): ${process.env.RENDER_EXTERNAL_URL}`);
-    console.log(`Webhook URL (for Paynow config): ${process.env.RENDER_EXTERNAL_URL}/api/paynow/webhook`);
+    console.log(`[${new Date().toISOString()}] Server running on port ${PORT}`);
+    console.log(`[${new Date().toISOString()}] Paynow API Base URL: ${PAYNOW_API_BASE_URL}`);
+    console.log(`[${new Date().toISOString()}] Live Service URL (Render): ${process.env.RENDER_EXTERNAL_URL}`);
+    console.log(`[${new Date().toISOString()}] Webhook URL (for Paynow config): ${process.env.RENDER_EXTERNAL_URL}/api/paynow/webhook`);
 });
