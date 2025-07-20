@@ -17,7 +17,7 @@ function generateHash(values, integrationKey) {
   const finalString = rawString + integrationKey;
 
   console.log('\n🔍 RAW STRING TO HASH (BEFORE HASHING):');
-  console.log(finalString); // Debug raw string
+  console.log(finalString); // full raw string
 
   const hash = crypto.createHash('sha512').update(finalString, 'utf8').digest('hex');
   return hash.toUpperCase();
@@ -41,29 +41,37 @@ app.post('/create-paynow-order', async (req, res) => {
 
     const ref = reference || 'RAVEN_ORDER';
     const info = additionalinfo || description || 'Art Payment';
+
+    // ✅ These must be raw and unencoded for hash
     const returnUrlRaw = returnurl || 'https://sukaravtech.art/success';
     const resultUrlRaw = resulturl || 'https://sukaravtech.art/paynow-status';
     const status = 'Message';
 
-    // ✅ Hash with raw (non-encoded) values
+    // ✅ Generate hash using raw values
     const valuesToHash = [id, ref, amount, info, returnUrlRaw, resultUrlRaw, status];
     const hash = generateHash(valuesToHash, key);
 
-    // ✅ Send encoded values to Paynow
     const params = new URLSearchParams();
     params.append('id', id);
     params.append('reference', ref);
     params.append('amount', amount);
     params.append('additionalinfo', info);
+
+    // ✅ Only encode when sending
     params.append('returnurl', encodeURIComponent(returnUrlRaw));
     params.append('resulturl', encodeURIComponent(resultUrlRaw));
+
     params.append('status', status);
-    params.append('authemail', authemail);
+    params.append('authemail', authemail); // Required in payload, NOT in hash
     params.append('hash', hash);
 
-    console.log('🚀 Final Params Sent to Paynow:', params.toString());
+    console.log('\n🚀 Final Params Sent to Paynow:', params.toString());
 
-    const response = await axios.post('https://www.paynow.co.zw/Interface/InitiateTransaction', params);
+    const response = await axios.post(
+      'https://www.paynow.co.zw/Interface/InitiateTransaction',
+      params
+    );
+
     const data = new URLSearchParams(response.data);
     const browserUrl = data.get('browserurl');
     const statusResp = data.get('status');
