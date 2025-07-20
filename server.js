@@ -41,8 +41,8 @@ app.post('/create-paynow-order', async (req, res) => {
 
     const ref = reference || 'RAVEN_ORDER';
     const info = additionalinfo || description || 'Art Payment';
-    const returnUrl = returnurl || 'https://sukaravtech.art/success';
-    const resultUrl = resulturl || 'https://sukaravtech.art/paynow-status';
+    const returnUrl = decodeURIComponent(returnurl || 'https://sukaravtech.art/success');
+    const resultUrl = decodeURIComponent(resulturl || 'https://sukaravtech.art/paynow-status');
     const status = 'Message';
 
     const valuesToHash = [id, ref, amount, info, returnUrl, resultUrl, status];
