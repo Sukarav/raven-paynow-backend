@@ -17,7 +17,7 @@ function generateHash(values, integrationKey) {
   const finalString = rawString + integrationKey;
 
   console.log('\n🔍 RAW STRING TO HASH (BEFORE HASHING):');
-  console.log(finalString); // full raw string
+  console.log(finalString); // full string used for hashing
 
   const hash = crypto.createHash('sha512').update(finalString, 'utf8').digest('hex');
   return hash.toUpperCase();
@@ -42,36 +42,31 @@ app.post('/create-paynow-order', async (req, res) => {
     const ref = reference || 'RAVEN_ORDER';
     const info = additionalinfo || description || 'Art Payment';
 
-    // ✅ These must be raw and unencoded for hash
+    // ✅ Use raw URLs (not encoded)
     const returnUrlRaw = returnurl || 'https://sukaravtech.art/success';
     const resultUrlRaw = resulturl || 'https://sukaravtech.art/paynow-status';
+
     const status = 'Message';
 
-    // ✅ Generate hash using raw values
+    // ✅ Raw string used for hashing (NO encoding!)
     const valuesToHash = [id, ref, amount, info, returnUrlRaw, resultUrlRaw, status];
     const hash = generateHash(valuesToHash, key);
 
+    // ✅ Parameters sent to Paynow (NO encoding here either)
     const params = new URLSearchParams();
     params.append('id', id);
     params.append('reference', ref);
     params.append('amount', amount);
     params.append('additionalinfo', info);
-
-    // ✅ Only encode when sending
-    params.append('returnurl', encodeURIComponent(returnUrlRaw));
-    params.append('resulturl', encodeURIComponent(resultUrlRaw));
-
+    params.append('returnurl', returnUrlRaw);  // ✅ Raw, not encoded
+    params.append('resulturl', resultUrlRaw);  // ✅ Raw, not encoded
     params.append('status', status);
-    params.append('authemail', authemail); // Required in payload, NOT in hash
+    params.append('authemail', authemail);     // ✅ Not included in hash, but required in payload
     params.append('hash', hash);
 
-    console.log('\n🚀 Final Params Sent to Paynow:', params.toString());
+    console.log('🚀 Final Params Sent to Paynow:', params.toString());
 
-    const response = await axios.post(
-      'https://www.paynow.co.zw/Interface/InitiateTransaction',
-      params
-    );
-
+    const response = await axios.post('https://www.paynow.co.zw/Interface/InitiateTransaction', params);
     const data = new URLSearchParams(response.data);
     const browserUrl = data.get('browserurl');
     const statusResp = data.get('status');
