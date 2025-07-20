@@ -50,8 +50,8 @@ app.post('/create-paynow-order', async (req, res) => {
       reference: ref,
       amount,
       additionalinfo: info,
-      returnurl: returnUrlRaw,     // ✅ NO ENCODING HERE
-      resulturl: resultUrlRaw,     // ✅ NO ENCODING HERE
+      returnurl: returnUrlRaw,     
+      resulturl: resultUrlRaw,    
       status,
       authemail,
       hash
@@ -81,3 +81,4 @@ app.post('/create-paynow-order', async (req, res) => {
 
 app.listen(port, () => {
   console.log(`🟢 Raven Paynow server running on port ${port}`);
+});
