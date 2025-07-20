@@ -16,7 +16,9 @@ function generateHash(values, integrationKey) {
   const rawString = values.join('');
   const finalString = rawString + integrationKey;
 
-  console.log('🪵 Raw string to hash:', finalString); // Debug line
+  console.log('\n🔍 RAW STRING TO HASH (BEFORE HASHING):');
+  console.log(finalString); // print exactly what's being hashed
+
   const hash = crypto.createHash('sha512').update(finalString, 'utf8').digest('hex');
   return hash.toUpperCase();
 }
