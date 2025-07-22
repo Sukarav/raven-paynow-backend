@@ -1,127 +1,127 @@
-// server.js  —  Express backend for PayNow
+// server.js – final, minimal version (Node 18+)
+
 require('dotenv').config();
 const express = require('express');
 const axios   = require('axios');
 const crypto  = require('crypto');
 
 const app  = express();
-const PORT = process.env.PORT || 10_000;
+const PORT = process.env.PORT || 10000;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* ────────────────────────────────────────────
-   Environment / defaults
-   ────────────────────────────────────────── */
-const PAYNOW_ID    = process.env.PAYNOW_INTEGRATION_ID  || '21458';
-const PAYNOW_KEY   = process.env.PAYNOW_INTEGRATION_KEY || 'a35a82b3-aa73-4839-90bd-aa2eb655c9de';
-const MERCHANT_MAIL= process.env.MERCHANT_EMAIL         || 'sukaravtech@gmail.com';
+// -----------------------------------------------------------------------------
+// ENV CONFIG
+// -----------------------------------------------------------------------------
+const PAYNOW_ID   = process.env.PAYNOW_INTEGRATION_ID  || '21458';
+const PAYNOW_KEY  = process.env.PAYNOW_INTEGRATION_KEY || 'a35a82b3-aa73-4839-90bd-aa2eb655c9de';
+const MERCHANT_EM = process.env.MERCHANT_EMAIL         || 'sukaravtech@gmail.com';
 
-const DEFAULT_RETURN = process.env.PAYNOW_RETURN_URL || 'https://sukaravtech.art/payment-success';
-const DEFAULT_RESULT = process.env.PAYNOW_RESULT_URL || 'https://sukaravtech.art/payment-result';
-
-/* ────────────────────────────────────────────
-   Helpers
-   ────────────────────────────────────────── */
-// PayNow treats “ ” → "+"  (space becomes plus) and
-// expects exactly that representation in the hash.
-const encodePZ = (v) => encodeURIComponent(v).replace(/%20/g, '+');
-
-function createHash(values) {
-  const concatenated =
-    encodePZ(values.id)            +
-    encodePZ(values.reference)     +
-    encodePZ(values.amount)        +
-    encodePZ(values.additionalinfo)+
-    encodePZ(values.returnurl)     +
-    encodePZ(values.resulturl)     +
-    encodePZ(values.status)        +
-    PAYNOW_KEY;                     // secret last
-
-  return crypto
-    .createHash('sha512')
-    .update(concatenated, 'utf8')
-    .digest('hex')
-    .toUpperCase();
+// -----------------------------------------------------------------------------
+// HELPERS
+// -----------------------------------------------------------------------------
+function log(stage, data) {
+  console.log(`\n[${new Date().toISOString()}] ${stage}:`);
+  console.log(data);
 }
 
-/* ────────────────────────────────────────────
-   Logging (shows in Render “Logs” tab)
-   ────────────────────────────────────────── */
-app.use((req, _res, next) => {
-  console.log(
-    `[${new Date().toISOString()}] ${req.method} ${req.url} | body →`,
-    req.headers['content-type']?.startsWith('application/json')
-      ? req.body
-      : '[non-json]'
-  );
-  next();
-});
+function sha512Upper(str) {
+  return crypto.createHash('sha512').update(str, 'utf8').digest('hex').toUpperCase();
+}
 
-/* ────────────────────────────────────────────
-   Main endpoint
-   ────────────────────────────────────────── */
+/** Build Paynow hash: id+reference+amount+additionalinfo+returnurl+resulturl */
+function buildHash(fields) {
+  const raw = [
+    fields.id,
+    fields.reference,
+    fields.amount,
+    fields.additionalinfo,
+    fields.returnurl,
+    fields.resulturl
+  ].join('');
+  return sha512Upper(raw + PAYNOW_KEY);
+}
+
+// -----------------------------------------------------------------------------
+// ROUTES
+// -----------------------------------------------------------------------------
 app.post('/create-paynow-order', async (req, res) => {
   try {
+    // -----------------------------------------------------------------------
+    // 1  Collect / sanitise client data
+    // -----------------------------------------------------------------------
     const {
-      amount,
-      reference = `IMG-${Date.now()}`,
+      amount         = '0.69',
+      reference      = `IMG-${Date.now()}`,
       additionalinfo = 'AI Glow Preview',
-      returnurl = DEFAULT_RETURN,
-      resulturl = DEFAULT_RESULT,
-      email = MERCHANT_MAIL
-    } = req.body;
+      email          = MERCHANT_EM,
+      returnurl      = 'https://sukaravtech.art/payment-success',
+      resulturl      = 'https://sukaravtech.art/payment-result'
+    } = req.body || {};
 
-    if (!amount) return res.status(400).json({ error: 'Amount is required' });
+    // Paynow needs exactly 2 decimal places
+    const fixedAmount = parseFloat(amount).toFixed(2);
 
-    // build **raw** payload first
-    const payload = {
+    // -----------------------------------------------------------------------
+    // 2  Generate hash
+    // -----------------------------------------------------------------------
+    const hash = buildHash({
       id: PAYNOW_ID,
       reference,
-      amount,
+      amount: fixedAmount,
+      additionalinfo,
+      returnurl,
+      resulturl
+    });
+
+    // -----------------------------------------------------------------------
+    // 3  Prepare payload
+    // -----------------------------------------------------------------------
+    const payload = new URLSearchParams({
+      id:            PAYNOW_ID,
+      reference,
+      amount:        fixedAmount,
       additionalinfo,
       returnurl,
       resulturl,
-      status: 'Message',
-      authemail: email          // NOT in the hash
-    };
+      status:        'Message',          // ✅ sent, but NOT hashed
+      authemail:     email,
+      hash
+    });
 
-    // add hash
-    payload.hash = createHash(payload);
+    log('PayNow Outgoing payload', Object.fromEntries(payload));
 
-    console.log('[PayNow] Outgoing payload:', payload);
-
-    // convert to x-www-form-urlencoded
-    const body = Object.entries(payload)
-  .map(([k, v]) => `${encodeURIComponent(k)}=${encodePZ(String(v))}`)
-  .join('&');
-
-    const { data: rawResp } = await axios.post(
+    // -----------------------------------------------------------------------
+    // 4  POST to Paynow
+    // -----------------------------------------------------------------------
+    const pnRes = await axios.post(
       'https://www.paynow.co.zw/Interface/InitiateTransaction',
-      body,
+      payload,
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
 
-    console.log('[PayNow] Raw response:', rawResp);
+    const pnData = new URLSearchParams(pnRes.data);
+    const status = pnData.get('status');
+    const url    = pnData.get('browserurl');
 
-    const resp = new URLSearchParams(rawResp);
-    if (resp.get('status') !== 'Ok')
-      return res.status(500).json({
-        error: 'PayNow rejected the request',
-        details: rawResp
-      });
+    log('PayNow Raw response', pnRes.data);
 
-    return res.json({ success: true, url: resp.get('browserurl') });
+    if (status !== 'Ok' || !url) {
+      return res.status(502).json({ error: 'Paynow rejected request', details: pnRes.data });
+    }
+
+    return res.json({ url });
+
   } catch (err) {
-    console.error('[PayNow] Fatal error:', err?.response?.data || err.message);
-    res.status(500).json({
-      error: 'Internal server error',
-      details: err?.message || 'unknown'
-    });
+    console.error('[PayNow] Fatal error:', err?.response?.data || err);
+    res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
 
-/* ──────────────────────────────────────────── */
+// -----------------------------------------------------------------------------
+// START
+// -----------------------------------------------------------------------------
 app.listen(PORT, () => {
-  console.log(`🟢 PayNow server listening on ${PORT}`);
+  console.log(`🟢 Paynow server listening on ${PORT}`);
 });
