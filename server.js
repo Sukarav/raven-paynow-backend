@@ -92,7 +92,9 @@ app.post('/create-paynow-order', async (req, res) => {
     console.log('[PayNow] Outgoing payload:', payload);
 
     // convert to x-www-form-urlencoded
-    const body = new URLSearchParams(payload).toString();
+    const body = Object.entries(payload)
+  .map(([k, v]) => `${encodeURIComponent(k)}=${encodePZ(String(v))}`)
+  .join('&');
 
     const { data: rawResp } = await axios.post(
       'https://www.paynow.co.zw/Interface/InitiateTransaction',
