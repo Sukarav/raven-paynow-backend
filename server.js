@@ -3,11 +3,10 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
-
 const app = express();
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 app.use((req, res, next) => {
   // Render streams whatever we console.log
   console.log(
