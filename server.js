@@ -11,7 +11,7 @@ app.use(express.urlencoded({ extended: true }));
 // Load config from environment
 const PAYNOW_ID     = process.env.PAYNOW_INTEGRATION_ID   || '21458';
 const PAYNOW_KEY    = process.env.PAYNOW_INTEGRATION_KEY  || 'a35a82b3-aa73-4839-90bd-aa2eb655c9de';
-const MERCHANT_EMAIL= process.env.MERCHANT_EMAIL          || 'client@sukaravtech.art';
+const MERCHANT_EMAIL= process.env.MERCHANT_EMAIL          || 'sukaravtech@gmail.com';
 const RETURN_URL    = process.env.PAYNOW_RETURN_URL       || 'https://sukaravtech.art/success';
 const RESULT_URL    = process.env.PAYNOW_RESULT_URL       || 'https://sukaravtech.art/paynow-status';
 
