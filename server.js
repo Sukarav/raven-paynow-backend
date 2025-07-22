@@ -1,96 +1,122 @@
+// index.js (Express server for Paynow integration)
 require('dotenv').config();
 const express = require('express');
-const cors    = require('cors');
-const axios   = require('axios');
-const crypto  = require('crypto');
+const axios = require('axios');
+const crypto = require('crypto');
 
-/* ─────────── Config ─────────── */
-const ID    = process.env.PAYNOW_INTEGRATION_ID  || '21458';
-const KEY   = process.env.PAYNOW_INTEGRATION_KEY || 'a35a82b3-aa73-4839-90bd-aa2eb655c9de';
-const EMAIL = process.env.MERCHANT_EMAIL         || 'sukaravtech@gmail.com';
-const DEF_RETURN = process.env.PAYNOW_RETURN_URL || 'https://sukaravtech.art/success';
-const DEF_RESULT = process.env.PAYNOW_RESULT_URL || 'https://sukaravtech.art/paynow-status';
-
-/* ─────────── Express ─────────── */
 const app = express();
-app.use(cors({ origin: '*' }));
-app.options('*', (_, r) => r.sendStatus(204));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* Simple request logger (shows in Render logs) */
-app.use((req, _, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`,
-              'body →', JSON.stringify(req.body ?? {}));
-  next();
-});
+// Load config from environment
+const PAYNOW_ID     = process.env.PAYNOW_INTEGRATION_ID   || '21458';
+const PAYNOW_KEY    = process.env.PAYNOW_INTEGRATION_KEY  || 'a35a82b3-aa73-4839-90bd-aa2eb655c9de';
+const MERCHANT_EMAIL= process.env.MERCHANT_EMAIL          || 'sukaravtech@gmail.com';
+const RETURN_URL    = process.env.PAYNOW_RETURN_URL       || 'https://sukaravtech.art/success';
+const RESULT_URL    = process.env.PAYNOW_RESULT_URL       || 'https://sukaravtech.art/paynow-status';
 
-/* ─────────── Util: build PayNow hash ─────────── */
-function buildHash(o) {
-  const str =
-    o.id            +
-    o.reference     +
-    o.amount        +
-    o.additionalinfo+
-    o.returnurl     +
-    o.resulturl     +
-    'Message' +       // **must** be present
-    KEY;
-  return crypto.createHash('sha512').update(str, 'utf8').digest('hex').toUpperCase();
+// Utility: Log transaction stages (for debugging)
+function logStage(stage, data) {
+  console.log(`\n[Paynow] ${stage}:`);
+  console.log(data);
 }
 
-/* ───────────  POST /create-paynow-order ─────────── */
+// Utility: Generate SHA512 hash for Paynow payload
+function generatePaynowHash(values) {
+  let combined = '';
+  for (const [key, value] of Object.entries(values)) {
+    if (key.toLowerCase() !== 'hash') {
+      combined += value || '';  // concatenate value (omit key names and empty values)
+    }
+  }
+  combined += PAYNOW_KEY;  // append the integration key
+  return crypto.createHash('sha512').update(combined, 'utf8').digest('hex').toUpperCase();
+}
+
+// POST endpoint to create a Paynow order
 app.post('/create-paynow-order', async (req, res) => {
-  const { amount, reference, additionalinfo, returnurl, resulturl, email } = req.body || {};
+  const { amount, reference, additionalinfo, returnurl, resulturl, email } = req.body;
+  if (!amount) {
+    return res.status(400).json({ success: false, error: "Amount is required" });
+  }
 
-  if (!amount)
-    return res.status(400).json({ success: false, error: 'Amount is required' });
+  // Set defaults for optional fields
+  const paymentReference   = reference || `INV-${Date.now()}`;             // generate unique reference if not provided
+  const paymentDescription = additionalinfo || 'AI Art Preview for Design Lab';
+  const paymentReturnUrl   = returnurl || RETURN_URL;
+  const paymentResultUrl   = resulturl || RESULT_URL;
+  const buyerEmail         = email || MERCHANT_EMAIL;
 
-  const raw = {
-    id            : ID,
-    reference     : reference      || `INV-${Date.now()}`,
-    amount        : Number(amount).toFixed(2),
-    additionalinfo: additionalinfo || 'AI Glow Preview',
-    returnurl     : returnurl      || DEF_RETURN,
-    resulturl     : resulturl      || DEF_RESULT
+  // Construct payload for Paynow
+  const paynowData = {
+    id: PAYNOW_ID,
+    reference: paymentReference,
+    amount: parseFloat(amount).toFixed(2),  // format amount to two decimals
+    additionalinfo: paymentDescription,
+    returnurl: paymentReturnUrl,
+    resulturl: paymentResultUrl,
+    authemail: buyerEmail,
+    status: 'Message'
   };
 
-  const payload = {
-    ...raw,
-    status   : 'Message',
-    authemail: email || EMAIL,
-    hash     : buildHash(raw)
-  };
-
-  console.log('[PayNow] Outgoing payload:', payload);
-
-  /* Build form-urlencoded body (URLs will be percent-encoded automatically) */
-  const form = new URLSearchParams();
-  Object.entries(payload).forEach(([k, v]) => form.append(k, v));
+  logStage('Initiate Request Received', req.body);
+  logStage('Paynow Payload (before hash)', paynowData);
 
   try {
-    const resp = await axios.post(
+    // Generate security hash and attach to payload
+    paynowData.hash = generatePaynowHash(paynowData);
+    logStage('Generated Hash', paynowData.hash);
+
+    // Send the initiate transaction request to Paynow (form-urlencoded)
+    const paynowRes = await axios.post(
       'https://www.paynow.co.zw/interface/initiatetransaction',
-      form,
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+      new URLSearchParams(paynowData),  // form data
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }}
     );
+    const rawResponse = paynowRes.data;  // Paynow returns a URL-encoded response string
+    logStage('Raw Response from Paynow', rawResponse);
 
-    console.log('[PayNow] Raw response:', resp.data);
+    // Parse the response string into key-value pairs
+    const params = new URLSearchParams(rawResponse);
+    const status    = params.get('status')    || params.get('Status');
+    const errorMsg  = params.get('error')     || params.get('Error');
+    const browserUrl= params.get('browserurl')|| params.get('BrowserUrl');
+    const pollUrl   = params.get('pollurl')   || params.get('PollUrl');
+    const respHash  = params.get('hash')      || params.get('Hash');
 
-    const p   = new URLSearchParams(resp.data);
-    const sts = (p.get('status') || '').toUpperCase();
-    const url = p.get('browserurl');
+    // Verify Paynow's response hash for security (ensure the response is untampered)
+    if (respHash) {
+      const respValues = {};
+      for (const [key, val] of params) {
+        if (key.toLowerCase() !== 'hash') {
+          respValues[key.toLowerCase()] = val;  // use decoded values
+        }
+      }
+      const expectedHash = generatePaynowHash(respValues);
+      if (expectedHash !== respHash.toUpperCase()) {
+        console.error("[Paynow] Warning: Hash verification failed for Paynow response.");
+        // (Optional: you could return an error here instead of proceeding)
+      }
+    }
 
-    if (sts === 'OK' && url)
-      return res.json({ success: true, url });
-
-    return res.status(400).json({ success: false, error: p.get('error') || 'PayNow error' });
+    // Handle Paynow response
+    if (status && status.toUpperCase() === 'OK' && browserUrl) {
+      // Success: Paynow created the transaction
+      logStage('Payment Initiation Successful', `BrowserUrl: ${browserUrl}`);
+      return res.json({ success: true, url: browserUrl, pollUrl: pollUrl });
+    } else {
+      // Failure: Paynow returned an error
+      console.error("[Paynow] Initiation Error:", errorMsg);
+      return res.status(400).json({ success: false, error: errorMsg || 'Paynow initiation failed' });
+    }
   } catch (err) {
-    console.error('[PayNow] HTTP error:', err?.response?.data || err.message);
-    res.status(500).json({ success: false, error: 'Server error' });
+    console.error("[Paynow] HTTP Request Error:", err.message);
+    return res.status(500).json({ success: false, error: 'Server error while initiating payment' });
   }
 });
 
-/* ─────────── Start server ─────────── */
+// Start the server on the configured port
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`PayNow server listening on ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
