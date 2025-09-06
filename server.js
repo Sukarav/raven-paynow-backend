@@ -1,138 +1,156 @@
-// server.js – Paynow backend with Express Checkout support
+// server.js — Paynow Express Checkout backend (Node 18+)
 require('dotenv').config();
 const express = require('express');
-const axios   = require('axios');
-const crypto  = require('crypto');
+const cors = require('cors');
+const axios = require('axios');
+const crypto = require('crypto');
 
 const app = express();
+
+// --- CORS + body parsing ---
+app.use(cors({ origin: '*'}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* ─────────── Config ─────────── */
-const PAYNOW_ID      = process.env.PAYNOW_INTEGRATION_ID   || '21458';
-const PAYNOW_KEY     = process.env.PAYNOW_INTEGRATION_KEY  || 'a35a82b3-aa73-4839-90bd-aa2eb655c9de';
-const MERCHANT_EMAIL = process.env.MERCHANT_EMAIL          || 'sukaravtech@gmail.com';
-const RETURN_URL     = process.env.PAYNOW_RETURN_URL       || 'https://sukaravtech.art/success';
-const RESULT_URL     = process.env.PAYNOW_RESULT_URL       || 'https://sukaravtech.art/paynow-status';
+// --- Health check for Render ---
+app.get('/healthz', (_, res) => res.status(200).send('ok'));
 
-/* ─────────── Helpers ─────────── */
+// --- ENV (fallbacks are only for local testing) ---
+const PAYNOW_ID       = process.env.PAYNOW_INTEGRATION_ID  || '21458';
+const PAYNOW_KEY      = process.env.PAYNOW_INTEGRATION_KEY || 'a35a82b3-aa73-4839-90bd-aa2eb655c9de';
+const MERCHANT_EMAIL  = process.env.MERCHANT_EMAIL         || 'client@sukaravtech.art';
+const RETURN_URL_DEF  = process.env.PAYNOW_RETURN_URL      || 'https://sukaravtech.art/success';
+const RESULT_URL_DEF  = process.env.PAYNOW_RESULT_URL      || 'https://sukaravtech.art/paynow-status';
+const BRAND_DOMAIN    = process.env.BRAND_DOMAIN           || 'sukaravtech.art'; // used for authemail
+
+// --- Utils ---
+const WALLET_METHODS = ['ecocash', 'onemoney', 'innbucks', 'omari'];
+
 function log(stage, data) {
-  console.log(`\n[Paynow] ${stage}:`);
-  console.log(data);
+  console.log(`\n[Paynow] ${stage} @ ${new Date().toISOString()}`);
+  if (typeof data === 'string') console.log(data);
+  else console.log(JSON.stringify(data, null, 2));
 }
 
-function generateHash(values) {
-  let combined = '';
-  for (const [k, v] of Object.entries(values)) {
-    if (k.toLowerCase() !== 'hash') combined += v || '';
+// Paynow hash = concat(all values except "hash", in field order used in request) + KEY, then SHA512 UPPERCASE
+function generateHash(valuesObj) {
+  let concat = '';
+  for (const [k, v] of Object.entries(valuesObj)) {
+    if (k.toLowerCase() !== 'hash' && v != null) concat += String(v);
   }
-  combined += PAYNOW_KEY;
-  return crypto.createHash('sha512').update(combined, 'utf8').digest('hex').toUpperCase();
+  concat += PAYNOW_KEY;
+  return crypto.createHash('sha512').update(concat, 'utf8').digest('hex').toUpperCase();
 }
 
-/* ─────────── Endpoint ─────────── */
+// Normalise phone to 2637… format (no +, no spaces)
+function normalizeMsisdn(msisdn) {
+  if (!msisdn) return '';
+  let p = String(msisdn).replace(/[^\d+]/g, ''); // strip spaces/dots
+  if (p.startsWith('+')) p = p.slice(1);
+  if (p.startsWith('0'))  p = '263' + p.slice(1);
+  if (!p.startsWith('263')) p = '263' + p;       // last-ditch
+  return p;
+}
+
+// ---------- Create order (Express or Redirect) ----------
 app.post('/create-paynow-order', async (req, res) => {
-  const { amount, reference, additionalinfo, returnurl, resulturl, email, method, phone } = req.body;
-
-  if (!amount) {
-    return res.status(400).json({ success: false, error: 'Amount is required' });
-  }
-
-  // Defaults
-  const paymentReference   = reference      || `INV-${Date.now()}`;
-  const paymentDescription = additionalinfo || 'AI Art Preview for Design Lab';
-  const paymentReturnUrl   = returnurl      || RETURN_URL;
-  const paymentResultUrl   = resulturl      || RESULT_URL;
-  let buyerEmail           = email || MERCHANT_EMAIL;
-
-  // ── Express checkout handling ──
-  let normalizedPhone = phone;
-  if (method && ['ecocash','onemoney','innbucks','omari'].includes(method.toLowerCase())) {
-    if (!phone) {
-      return res.status(400).json({ success: false, error: 'Phone number required for express checkout' });
-    }
-
-    normalizedPhone = phone.replace(/^\+/, ''); // strip leading +
-    if (normalizedPhone.startsWith('0')) {
-      normalizedPhone = '263' + normalizedPhone.slice(1);
-    }
-    if (!normalizedPhone.startsWith('263')) {
-      return res.status(400).json({ success: false, error: 'Invalid phone format. Must start with 263' });
-    }
-
-    // build authemail as per Paynow docs
-    buyerEmail = `${normalizedPhone}@sukaravtech.art`;
-  }
-
-  // Payload
-  const paynowData = {
-    id            : PAYNOW_ID,
-    reference     : paymentReference,
-    amount        : parseFloat(amount).toFixed(2),
-    additionalinfo: paymentDescription,
-    returnurl     : paymentReturnUrl,
-    resulturl     : paymentResultUrl,
-    authemail     : buyerEmail,
-    status        : 'Message'
-  };
-
-  if (method && ['ecocash','onemoney','innbucks','omari'].includes(method.toLowerCase())) {
-    paynowData.method = method.toLowerCase();
-    paynowData.phone  = normalizedPhone;
-  }
-
-  log('Initiate Request Received', req.body);
-  log('Paynow Payload (before hash)', paynowData);
-
   try {
-    // Generate hash
-    paynowData.hash = generateHash(paynowData);
-    log('Generated Hash', paynowData.hash);
+    const {
+      amount,
+      reference,
+      additionalinfo,
+      returnurl,
+      resulturl,
+      email,
+      method,         // 'ecocash' | 'onemoney' | 'innbucks' | 'omari' | undefined
+      phone           // user's wallet number
+    } = req.body || {};
 
-    // Call Paynow
+    if (!amount) return res.status(400).json({ success: false, error: 'Amount is required' });
+
+    const isExpress = method && WALLET_METHODS.includes(String(method).toLowerCase());
+
+    // Base values
+    const payload = {
+      id: PAYNOW_ID,
+      reference: reference || `INV-${Date.now()}`,
+      amount: Number(amount).toFixed(2),
+      additionalinfo: additionalinfo || 'Sukarav – AI Art Preview',
+      returnurl: returnurl || RETURN_URL_DEF,
+      resulturl: resulturl || RESULT_URL_DEF,
+      status: 'Message',
+
+      // For express checkout, set authemail to <phone>@domain (per Paynow docs)
+      authemail: isExpress
+        ? `${normalizeMsisdn(phone)}@${BRAND_DOMAIN}`
+        : (email || MERCHANT_EMAIL)
+    };
+
+    // Express extras
+    if (isExpress) {
+      const normPhone = normalizeMsisdn(phone);
+      if (!normPhone || !/^263\d{9}$/.test(normPhone)) {
+        return res.status(400).json({ success:false, error:'Valid wallet number required (e.g., 26377xxxxxxx)' });
+      }
+      payload.method = String(method).toLowerCase();
+      payload.phone  = normPhone;
+    }
+
+    // Hash must be generated AFTER all fields are set
+    payload.hash = generateHash(payload);
+
+    log('Outgoing payload', payload);
+
+    // Send to Paynow
     const pnRes = await axios.post(
       'https://www.paynow.co.zw/interface/initiatetransaction',
-      new URLSearchParams(paynowData),
+      new URLSearchParams(payload),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
 
-    const rawResponse = pnRes.data;
-    log('Raw Response', rawResponse);
+    const raw = pnRes.data;
+    log('Raw response', raw);
 
-    const params = new URLSearchParams(rawResponse);
-    const status    = params.get('status')    || params.get('Status');
-    const errorMsg  = params.get('error')     || params.get('Error');
-    const browserUrl= params.get('browserurl')|| params.get('BrowserUrl');
-    const pollUrl   = params.get('pollurl')   || params.get('PollUrl');
-    const respHash  = params.get('hash')      || params.get('Hash');
+    // Parse response
+    const p = new URLSearchParams(raw);
+    const status     = p.get('status')     || p.get('Status');
+    const errorMsg   = p.get('error')      || p.get('Error');
+    const browserurl = p.get('browserurl') || p.get('BrowserUrl');
+    const pollurl    = p.get('pollurl')    || p.get('PollUrl');
 
-    // Optional: Verify Paynow response hash
-    if (respHash) {
-      const respValues = {};
-      for (const [k, v] of params) {
-        if (k.toLowerCase() !== 'hash') respValues[k.toLowerCase()] = v;
-      }
-      const expected = generateHash(respValues);
-      if (expected !== respHash.toUpperCase()) {
-        console.error('[Paynow] ⚠️ Response hash mismatch!');
-      }
+    if (!status || status.toUpperCase() !== 'OK') {
+      return res.status(400).json({ success:false, error: errorMsg || 'Paynow initiation failed' });
     }
 
-    if (status && status.toUpperCase() === 'OK') {
-      return res.json({
-        success: true,
-        url: browserUrl, // may be blank for express
-        pollUrl
-      });
-    } else {
-      return res.status(400).json({ success: false, error: errorMsg || 'Paynow initiation failed' });
-    }
+    // For express checkout, browserurl can be empty (no redirect). The USSD push is triggered on Paynow’s side.
+    return res.json({ success:true, url: browserurl || null, pollUrl: pollurl || null });
+
   } catch (err) {
     console.error('[Paynow] HTTP Error:', err?.response?.data || err.message);
-    return res.status(500).json({ success: false, error: 'Server error while initiating payment' });
+    return res.status(500).json({ success:false, error:'Server error contacting Paynow' });
   }
 });
 
-/* ─────────── Start ─────────── */
+// ---------- Poll convenience endpoint (optional) ----------
+app.get('/poll', async (req, res) => {
+  const { pollUrl } = req.query;
+  if (!pollUrl) return res.status(400).json({ success:false, error:'pollUrl is required' });
+
+  try {
+    const pnRes = await axios.get(pollUrl);
+    const raw = pnRes.data; // key=value&key=value
+    log('Poll raw', raw);
+    const p = new URLSearchParams(raw);
+    // Common keys: status=Paid/Cancelled/Created, reference, amount, pollurl, hash, etc.
+    const status = p.get('status') || p.get('Status') || '';
+    const ref    = p.get('reference') || p.get('Reference') || '';
+    return res.json({ success:true, status, reference: ref, raw });
+  } catch (e) {
+    console.error('[Paynow] Poll error:', e?.response?.data || e.message);
+    return res.status(500).json({ success:false, error:'Poll failed' });
+  }
+});
+
+// ---------- Start ----------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Paynow backend running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Paynow backend running on :${PORT}`));
