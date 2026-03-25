@@ -13,7 +13,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // --- Root + Health checks ---
-app.get('/', (_, res) => res.status(200).json({ status: 'ok', service: 'Raven PayNow Backend', version: '1.2.0' }));
+app.get('/', (_, res) => res.status(200).json({ status: 'ok', service: 'Raven PayNow Backend', version: '1.3.0-test' }));
 app.get('/healthz', (_, res) => res.status(200).send('ok'));
 
 // --- ENV ---
@@ -24,7 +24,7 @@ const RETURN_URL_DEF = process.env.PAYNOW_RETURN_URL      || 'https://sukaravtec
 const RESULT_URL_DEF = process.env.PAYNOW_RESULT_URL      || 'https://sukaravtech.art/paynow-status';
 const BRAND_DOMAIN   = process.env.BRAND_DOMAIN           || 'sukaravtech.art';
 
-// Supabase config — add SUPABASE_URL and SUPABASE_SERVICE_KEY to Railway env vars
+// Supabase config
 const SUPABASE_URL         = process.env.SUPABASE_URL         || 'https://ejzbypqqexfrmeulockh.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 
@@ -32,12 +32,11 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 const PN_REDIRECT_URL = 'https://www.paynow.co.zw/interface/initiatetransaction';
 const PN_EXPRESS_URL  = 'https://www.paynow.co.zw/interface/remotetransaction';
 
-// Wallet methods that use express checkout (USSD push)
 const WALLET_METHODS = ['ecocash', 'onemoney', 'innbucks', 'omari'];
 
-// Tier definitions — maps reference prefix to tier metadata
+// TEST MODE — Basic tier temporarily $0.10 for verification
 const TIER_MAP = {
-  'BASIC':  { tier: 'basic',  amount_usd: 0.29, credits: 1 },
+  'BASIC':  { tier: 'basic',  amount_usd: 0.10, credits: 1 },
   'PRO':    { tier: 'pro',    amount_usd: 0.69, credits: 3 },
   'STUDIO': { tier: 'studio', amount_usd: 1.00, credits: 5 },
   'HD':     { tier: 'hd_upscale', amount_usd: 1.00, credits: 0 },
@@ -69,19 +68,16 @@ function normalizeMsisdn(msisdn) {
   return p;
 }
 
-// Resolve tier info from reference string e.g. "PRO-1234567890" or "HD-1234567890"
 function resolveTier(reference, amount) {
   if (!reference) return null;
   const prefix = String(reference).split('-')[0].toUpperCase();
   if (TIER_MAP[prefix]) return TIER_MAP[prefix];
-  // Fallback: infer from amount
   const amt = parseFloat(amount) || 0;
-  if (amt <= 0.29) return { tier: 'basic',  amount_usd: 0.29, credits: 1 };
+  if (amt <= 0.15) return { tier: 'basic',  amount_usd: amt,  credits: 1 };
   if (amt <= 0.69) return { tier: 'pro',    amount_usd: 0.69, credits: 3 };
   return           { tier: 'studio', amount_usd: 1.00, credits: 5 };
 }
 
-// Write payment to Supabase — server-side, reliable, no browser dependency
 async function recordPaymentToSupabase({ reference, amount, tierInfo, userEmail }) {
   if (!SUPABASE_SERVICE_KEY) {
     console.warn('[Supabase] SUPABASE_SERVICE_KEY not set — skipping payment record');
@@ -118,23 +114,12 @@ async function recordPaymentToSupabase({ reference, amount, tierInfo, userEmail 
 // ---------- Create order ----------
 app.post('/create-paynow-order', async (req, res) => {
   try {
-    const {
-      amount,
-      reference,
-      additionalinfo,
-      returnurl,
-      resulturl,
-      email,
-      method,
-      phone
-    } = req.body || {};
-
+    const { amount, reference, additionalinfo, returnurl, resulturl, email, method, phone } = req.body || {};
     if (!amount) return res.status(400).json({ success: false, error: 'Amount is required' });
 
     const methodLower = method ? String(method).toLowerCase() : '';
     const isExpress = WALLET_METHODS.includes(methodLower);
 
-    // --- Build base payload ---
     const payload = {
       id:             PAYNOW_ID,
       reference:      reference || `INV-${Date.now()}`,
@@ -151,10 +136,7 @@ app.post('/create-paynow-order', async (req, res) => {
     if (isExpress) {
       const normPhone = normalizeMsisdn(phone);
       if (!normPhone || !/^263\d{9}$/.test(normPhone)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Valid wallet number required (e.g. 26377xxxxxxx — 12 digits total)'
-        });
+        return res.status(400).json({ success: false, error: 'Valid wallet number required (e.g. 26377xxxxxxx — 12 digits total)' });
       }
       payload.authemail = `${normPhone}@${BRAND_DOMAIN}`;
       payload.method    = methodLower;
@@ -163,15 +145,9 @@ app.post('/create-paynow-order', async (req, res) => {
     }
 
     payload.hash = generateHash(payload);
-
     log(`Outgoing payload [${isExpress ? 'EXPRESS' : 'REDIRECT'}] → ${paynowUrl}`, payload);
 
-    const pnRes = await axios.post(
-      paynowUrl,
-      new URLSearchParams(payload),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-    );
-
+    const pnRes = await axios.post(paynowUrl, new URLSearchParams(payload), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
     const raw = pnRes.data;
     log('Raw PayNow response', raw);
 
@@ -186,12 +162,7 @@ app.post('/create-paynow-order', async (req, res) => {
       return res.status(400).json({ success: false, error: errorMsg || `PayNow returned status: ${status}` });
     }
 
-    return res.json({
-      success:  true,
-      express:  isExpress,
-      url:      browserurl,
-      pollUrl:  pollurl,
-    });
+    return res.json({ success: true, express: isExpress, url: browserurl, pollUrl: pollurl });
 
   } catch (err) {
     const detail = err?.response?.data || err.message;
@@ -215,16 +186,10 @@ app.get('/poll', async (req, res) => {
     const ref    = reference || p.get('reference') || p.get('Reference') || '';
     const amt    = amount    || p.get('amount')    || p.get('Amount')    || '0';
 
-    // Write to Supabase the moment PayNow confirms — server-side, reliable
     if (status === 'paid') {
       const tierInfo = resolveTier(ref, amt);
       if (tierInfo) {
-        await recordPaymentToSupabase({
-          reference:  ref,
-          amount:     amt,
-          tierInfo,
-          userEmail:  email || null,
-        });
+        await recordPaymentToSupabase({ reference: ref, amount: amt, tierInfo, userEmail: email || null });
       }
     }
 
