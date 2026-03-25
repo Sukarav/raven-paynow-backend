@@ -7,16 +7,21 @@ const crypto = require('crypto');
 
 const app = express();
 
-// --- CORS + body parsing ---
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// --- Root + Health checks ---
-app.get('/', (_, res) => res.status(200).json({ status: 'ok', service: 'Raven PayNow Backend', version: '1.3.0-test' }));
+app.get('/', (_, res) => res.status(200).json({ status: 'ok', service: 'Raven PayNow Backend', version: '1.4.0-test' }));
 app.get('/healthz', (_, res) => res.status(200).send('ok'));
 
-// --- ENV ---
+// Debug endpoint — shows whether env vars are loaded (no sensitive values)
+app.get('/debug-env', (_, res) => res.json({
+  supabase_key_set: !!process.env.SUPABASE_SERVICE_KEY,
+  supabase_key_length: (process.env.SUPABASE_SERVICE_KEY || '').length,
+  supabase_url: process.env.SUPABASE_URL || 'using default',
+  node_env: process.env.NODE_ENV || 'not set',
+}));
+
 const PAYNOW_ID      = process.env.PAYNOW_INTEGRATION_ID  || '21458';
 const PAYNOW_KEY     = process.env.PAYNOW_INTEGRATION_KEY || 'a35a82b3-aa73-4839-90bd-aa2eb655c9de';
 const MERCHANT_EMAIL = process.env.MERCHANT_EMAIL         || 'client@sukaravtech.art';
@@ -24,24 +29,23 @@ const RETURN_URL_DEF = process.env.PAYNOW_RETURN_URL      || 'https://sukaravtec
 const RESULT_URL_DEF = process.env.PAYNOW_RESULT_URL      || 'https://sukaravtech.art/paynow-status';
 const BRAND_DOMAIN   = process.env.BRAND_DOMAIN           || 'sukaravtech.art';
 
-// Supabase config
 const SUPABASE_URL         = process.env.SUPABASE_URL         || 'https://ejzbypqqexfrmeulockh.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 
-// PayNow endpoints
 const PN_REDIRECT_URL = 'https://www.paynow.co.zw/interface/initiatetransaction';
 const PN_EXPRESS_URL  = 'https://www.paynow.co.zw/interface/remotetransaction';
+const WALLET_METHODS  = ['ecocash', 'onemoney', 'innbucks', 'omari'];
 
-const WALLET_METHODS = ['ecocash', 'onemoney', 'innbucks', 'omari'];
-
-// TEST MODE — Basic tier temporarily $0.10 for verification
+// Tier map — reference prefix takes priority, then amount fallback
 const TIER_MAP = {
-  'BASIC':  { tier: 'basic',  amount_usd: 0.10, credits: 1 },
-  'PRO':    { tier: 'pro',    amount_usd: 0.69, credits: 3 },
-  'STUDIO': { tier: 'studio', amount_usd: 1.00, credits: 5 },
+  'BASIC':  { tier: 'basic',      amount_usd: 0.10, credits: 1 },
+  'PRO':    { tier: 'pro',        amount_usd: 0.69, credits: 3 },
+  'STUDIO': { tier: 'studio',     amount_usd: 1.00, credits: 5 },
   'HD':     { tier: 'hd_upscale', amount_usd: 1.00, credits: 0 },
-  'FLYER':  { tier: 'pro',    amount_usd: 0.69, credits: 3 },
-  'STYLE':  { tier: 'pro',    amount_usd: 0.69, credits: 3 },
+  'FLYER':  { tier: 'pro',        amount_usd: 0.69, credits: 3 },
+  'STYLE':  { tier: 'pro',        amount_usd: 0.69, credits: 3 },
+  'SK':     { tier: 'basic',      amount_usd: 0.10, credits: 1 }, // fallback for SK-timestamp refs
+  'CRED':   { tier: 'basic',      amount_usd: 0.10, credits: 1 }, // fallback for CRED-timestamp refs
 };
 
 function log(stage, data) {
@@ -69,13 +73,25 @@ function normalizeMsisdn(msisdn) {
 }
 
 function resolveTier(reference, amount) {
-  if (!reference) return null;
-  const prefix = String(reference).split('-')[0].toUpperCase();
-  if (TIER_MAP[prefix]) return TIER_MAP[prefix];
   const amt = parseFloat(amount) || 0;
-  if (amt <= 0.15) return { tier: 'basic',  amount_usd: amt,  credits: 1 };
-  if (amt <= 0.69) return { tier: 'pro',    amount_usd: 0.69, credits: 3 };
-  return           { tier: 'studio', amount_usd: 1.00, credits: 5 };
+  // Try prefix match first
+  if (reference) {
+    const prefix = String(reference).split('-')[0].toUpperCase();
+    if (TIER_MAP[prefix]) {
+      // Use actual amount paid (more accurate for records)
+      const t = { ...TIER_MAP[prefix] };
+      if (amt > 0) t.amount_usd = amt;
+      return t;
+    }
+  }
+  // Fallback: infer from amount
+  if (amt > 0) {
+    if (amt <= 0.15) return { tier: 'basic',      amount_usd: amt,  credits: 1 };
+    if (amt <= 0.69) return { tier: 'pro',        amount_usd: amt,  credits: 3 };
+    return           { tier: 'studio',     amount_usd: amt,  credits: 5 };
+  }
+  // Last resort: basic tier
+  return { tier: 'basic', amount_usd: 0.10, credits: 1 };
 }
 
 async function recordPaymentToSupabase({ reference, amount, tierInfo, userEmail }) {
@@ -93,6 +109,7 @@ async function recordPaymentToSupabase({ reference, amount, tierInfo, userEmail 
       reference:  reference || null,
       status:     'confirmed',
     };
+    log('Writing to Supabase', body);
     const res = await axios.post(
       `${SUPABASE_URL}/rest/v1/payments`,
       body,
@@ -105,7 +122,7 @@ async function recordPaymentToSupabase({ reference, amount, tierInfo, userEmail 
         },
       }
     );
-    log('Supabase payment recorded', { status: res.status, reference, tier: tierInfo.tier });
+    log('Supabase write result', { status: res.status, tier: tierInfo.tier, amount: tierInfo.amount_usd });
   } catch (err) {
     console.error('[Supabase] Failed to record payment:', err?.response?.data || err.message);
   }
@@ -145,11 +162,11 @@ app.post('/create-paynow-order', async (req, res) => {
     }
 
     payload.hash = generateHash(payload);
-    log(`Outgoing payload [${isExpress ? 'EXPRESS' : 'REDIRECT'}] → ${paynowUrl}`, payload);
+    log(`Outgoing [${isExpress ? 'EXPRESS' : 'REDIRECT'}]`, { amount: payload.amount, reference: payload.reference });
 
     const pnRes = await axios.post(paynowUrl, new URLSearchParams(payload), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
     const raw = pnRes.data;
-    log('Raw PayNow response', raw);
+    log('PayNow response', raw);
 
     const p = new URLSearchParams(raw);
     const status     = p.get('status')     || p.get('Status')     || '';
@@ -158,15 +175,14 @@ app.post('/create-paynow-order', async (req, res) => {
     const pollurl    = p.get('pollurl')    || p.get('PollUrl')    || null;
 
     if (status.toUpperCase() !== 'OK') {
-      log('PayNow error response', { status, errorMsg, raw });
+      log('PayNow error', { status, errorMsg });
       return res.status(400).json({ success: false, error: errorMsg || `PayNow returned status: ${status}` });
     }
 
     return res.json({ success: true, express: isExpress, url: browserurl, pollUrl: pollurl });
 
   } catch (err) {
-    const detail = err?.response?.data || err.message;
-    console.error('[Paynow] HTTP Error:', detail);
+    console.error('[Paynow] HTTP Error:', err?.response?.data || err.message);
     return res.status(500).json({ success: false, error: 'Server error contacting PayNow' });
   }
 });
@@ -183,14 +199,16 @@ app.get('/poll', async (req, res) => {
 
     const p      = new URLSearchParams(raw);
     const status = (p.get('status') || p.get('Status') || '').toLowerCase();
-    const ref    = reference || p.get('reference') || p.get('Reference') || '';
-    const amt    = amount    || p.get('amount')    || p.get('Amount')    || '0';
+    // Get reference and amount from PayNow response (more reliable than query params)
+    const ref    = p.get('reference') || p.get('Reference') || reference || '';
+    const amt    = p.get('amount')    || p.get('Amount')    || amount    || '0';
+
+    log('Poll result', { status, ref, amt, key_set: !!SUPABASE_SERVICE_KEY });
 
     if (status === 'paid') {
       const tierInfo = resolveTier(ref, amt);
-      if (tierInfo) {
-        await recordPaymentToSupabase({ reference: ref, amount: amt, tierInfo, userEmail: email || null });
-      }
+      log('Resolved tier', tierInfo);
+      await recordPaymentToSupabase({ reference: ref, amount: amt, tierInfo, userEmail: email || null });
     }
 
     return res.json({ success: true, status, reference: ref });
@@ -200,6 +218,5 @@ app.get('/poll', async (req, res) => {
   }
 });
 
-// ---------- Start ----------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Paynow backend running on 0.0.0.0:${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Paynow backend v1.4.0-test running on 0.0.0.0:${PORT} | supabase_key=${!!process.env.SUPABASE_SERVICE_KEY}`));
