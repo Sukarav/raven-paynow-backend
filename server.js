@@ -11,14 +11,11 @@ app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.get('/', (_, res) => res.status(200).json({ status: 'ok', service: 'Raven PayNow Backend', version: '1.4.0-test' }));
+app.get('/', (_, res) => res.status(200).json({ status: 'ok', service: 'Raven PayNow Backend', version: '1.5.0' }));
 app.get('/healthz', (_, res) => res.status(200).send('ok'));
-
-// Debug endpoint — shows whether env vars are loaded (no sensitive values)
 app.get('/debug-env', (_, res) => res.json({
   supabase_key_set: !!process.env.SUPABASE_SERVICE_KEY,
   supabase_key_length: (process.env.SUPABASE_SERVICE_KEY || '').length,
-  supabase_url: process.env.SUPABASE_URL || 'using default',
   node_env: process.env.NODE_ENV || 'not set',
 }));
 
@@ -36,16 +33,15 @@ const PN_REDIRECT_URL = 'https://www.paynow.co.zw/interface/initiatetransaction'
 const PN_EXPRESS_URL  = 'https://www.paynow.co.zw/interface/remotetransaction';
 const WALLET_METHODS  = ['ecocash', 'onemoney', 'innbucks', 'omari'];
 
-// Tier map — reference prefix takes priority, then amount fallback
 const TIER_MAP = {
-  'BASIC':  { tier: 'basic',      amount_usd: 0.10, credits: 1 },
+  'BASIC':  { tier: 'basic',      amount_usd: 0.29, credits: 1 },
   'PRO':    { tier: 'pro',        amount_usd: 0.69, credits: 3 },
   'STUDIO': { tier: 'studio',     amount_usd: 1.00, credits: 5 },
   'HD':     { tier: 'hd_upscale', amount_usd: 1.00, credits: 0 },
   'FLYER':  { tier: 'pro',        amount_usd: 0.69, credits: 3 },
   'STYLE':  { tier: 'pro',        amount_usd: 0.69, credits: 3 },
-  'SK':     { tier: 'basic',      amount_usd: 0.10, credits: 1 }, // fallback for SK-timestamp refs
-  'CRED':   { tier: 'basic',      amount_usd: 0.10, credits: 1 }, // fallback for CRED-timestamp refs
+  'SK':     { tier: 'basic',      amount_usd: 0.29, credits: 1 },
+  'CRED':   { tier: 'basic',      amount_usd: 0.29, credits: 1 },
 };
 
 function log(stage, data) {
@@ -74,24 +70,20 @@ function normalizeMsisdn(msisdn) {
 
 function resolveTier(reference, amount) {
   const amt = parseFloat(amount) || 0;
-  // Try prefix match first
   if (reference) {
     const prefix = String(reference).split('-')[0].toUpperCase();
     if (TIER_MAP[prefix]) {
-      // Use actual amount paid (more accurate for records)
       const t = { ...TIER_MAP[prefix] };
       if (amt > 0) t.amount_usd = amt;
       return t;
     }
   }
-  // Fallback: infer from amount
   if (amt > 0) {
-    if (amt <= 0.15) return { tier: 'basic',      amount_usd: amt,  credits: 1 };
-    if (amt <= 0.69) return { tier: 'pro',        amount_usd: amt,  credits: 3 };
-    return           { tier: 'studio',     amount_usd: amt,  credits: 5 };
+    if (amt <= 0.35) return { tier: 'basic',  amount_usd: amt, credits: 1 };
+    if (amt <= 0.75) return { tier: 'pro',    amount_usd: amt, credits: 3 };
+    return           { tier: 'studio', amount_usd: amt, credits: 5 };
   }
-  // Last resort: basic tier
-  return { tier: 'basic', amount_usd: 0.10, credits: 1 };
+  return { tier: 'basic', amount_usd: 0.29, credits: 1 };
 }
 
 async function recordPaymentToSupabase({ reference, amount, tierInfo, userEmail }) {
@@ -128,7 +120,6 @@ async function recordPaymentToSupabase({ reference, amount, tierInfo, userEmail 
   }
 }
 
-// ---------- Create order ----------
 app.post('/create-paynow-order', async (req, res) => {
   try {
     const { amount, reference, additionalinfo, returnurl, resulturl, email, method, phone } = req.body || {};
@@ -187,7 +178,6 @@ app.post('/create-paynow-order', async (req, res) => {
   }
 });
 
-// ---------- Poll endpoint ----------
 app.get('/poll', async (req, res) => {
   const { pollUrl, reference, amount, email } = req.query;
   if (!pollUrl) return res.status(400).json({ success: false, error: 'pollUrl is required' });
@@ -199,7 +189,6 @@ app.get('/poll', async (req, res) => {
 
     const p      = new URLSearchParams(raw);
     const status = (p.get('status') || p.get('Status') || '').toLowerCase();
-    // Get reference and amount from PayNow response (more reliable than query params)
     const ref    = p.get('reference') || p.get('Reference') || reference || '';
     const amt    = p.get('amount')    || p.get('Amount')    || amount    || '0';
 
@@ -219,4 +208,4 @@ app.get('/poll', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Paynow backend v1.4.0-test running on 0.0.0.0:${PORT} | supabase_key=${!!process.env.SUPABASE_SERVICE_KEY}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Paynow backend v1.5.0 running on 0.0.0.0:${PORT} | supabase_key=${!!process.env.SUPABASE_SERVICE_KEY}`));
