@@ -13,11 +13,6 @@ app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (_, res) => res.status(200).json({ status: 'ok', service: 'Raven PayNow Backend', version: '1.5.0' }));
 app.get('/healthz', (_, res) => res.status(200).send('ok'));
-app.get('/debug-env', (_, res) => res.json({
-  supabase_key_set: !!process.env.SUPABASE_SERVICE_KEY,
-  supabase_key_length: (process.env.SUPABASE_SERVICE_KEY || '').length,
-  node_env: process.env.NODE_ENV || 'not set',
-}));
 
 const PAYNOW_ID      = process.env.PAYNOW_INTEGRATION_ID  || '21458';
 const PAYNOW_KEY     = process.env.PAYNOW_INTEGRATION_KEY || 'a35a82b3-aa73-4839-90bd-aa2eb655c9de';
@@ -79,8 +74,8 @@ function resolveTier(reference, amount) {
     }
   }
   if (amt > 0) {
-    if (amt <= 0.35) return { tier: 'basic',  amount_usd: amt, credits: 1 };
-    if (amt <= 0.75) return { tier: 'pro',    amount_usd: amt, credits: 3 };
+    if (amt <= 0.30) return { tier: 'basic',  amount_usd: amt, credits: 1 };
+    if (amt <= 0.69) return { tier: 'pro',    amount_usd: amt, credits: 3 };
     return           { tier: 'studio', amount_usd: amt, credits: 5 };
   }
   return { tier: 'basic', amount_usd: 0.29, credits: 1 };
