@@ -13,7 +13,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // --- Root + Health checks ---
-app.get('/', (_, res) => res.status(200).json({ status: 'ok', service: 'Raven PayNow Backend', version: '1.1.0' }));
+app.get('/', (_, res) => res.status(200).json({ status: 'ok', service: 'Raven PayNow Backend', version: '1.2.0' }));
 app.get('/healthz', (_, res) => res.status(200).send('ok'));
 
 // --- ENV ---
@@ -24,12 +24,26 @@ const RETURN_URL_DEF = process.env.PAYNOW_RETURN_URL      || 'https://sukaravtec
 const RESULT_URL_DEF = process.env.PAYNOW_RESULT_URL      || 'https://sukaravtech.art/paynow-status';
 const BRAND_DOMAIN   = process.env.BRAND_DOMAIN           || 'sukaravtech.art';
 
+// Supabase config — add SUPABASE_URL and SUPABASE_SERVICE_KEY to Railway env vars
+const SUPABASE_URL         = process.env.SUPABASE_URL         || 'https://ejzbypqqexfrmeulockh.supabase.co';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
+
 // PayNow endpoints
 const PN_REDIRECT_URL = 'https://www.paynow.co.zw/interface/initiatetransaction';
 const PN_EXPRESS_URL  = 'https://www.paynow.co.zw/interface/remotetransaction';
 
 // Wallet methods that use express checkout (USSD push)
 const WALLET_METHODS = ['ecocash', 'onemoney', 'innbucks', 'omari'];
+
+// Tier definitions — maps reference prefix to tier metadata
+const TIER_MAP = {
+  'BASIC':  { tier: 'basic',  amount_usd: 0.29, credits: 1 },
+  'PRO':    { tier: 'pro',    amount_usd: 0.69, credits: 3 },
+  'STUDIO': { tier: 'studio', amount_usd: 1.00, credits: 5 },
+  'HD':     { tier: 'hd_upscale', amount_usd: 1.00, credits: 0 },
+  'FLYER':  { tier: 'pro',    amount_usd: 0.69, credits: 3 },
+  'STYLE':  { tier: 'pro',    amount_usd: 0.69, credits: 3 },
+};
 
 function log(stage, data) {
   console.log(`\n[Paynow] ${stage} @ ${new Date().toISOString()}`);
@@ -53,6 +67,52 @@ function normalizeMsisdn(msisdn) {
   if (p.startsWith('0'))  p = '263' + p.slice(1);
   if (!p.startsWith('263')) p = '263' + p;
   return p;
+}
+
+// Resolve tier info from reference string e.g. "PRO-1234567890" or "HD-1234567890"
+function resolveTier(reference, amount) {
+  if (!reference) return null;
+  const prefix = String(reference).split('-')[0].toUpperCase();
+  if (TIER_MAP[prefix]) return TIER_MAP[prefix];
+  // Fallback: infer from amount
+  const amt = parseFloat(amount) || 0;
+  if (amt <= 0.29) return { tier: 'basic',  amount_usd: 0.29, credits: 1 };
+  if (amt <= 0.69) return { tier: 'pro',    amount_usd: 0.69, credits: 3 };
+  return           { tier: 'studio', amount_usd: 1.00, credits: 5 };
+}
+
+// Write payment to Supabase — server-side, reliable, no browser dependency
+async function recordPaymentToSupabase({ reference, amount, tierInfo, userEmail }) {
+  if (!SUPABASE_SERVICE_KEY) {
+    console.warn('[Supabase] SUPABASE_SERVICE_KEY not set — skipping payment record');
+    return;
+  }
+  try {
+    const body = {
+      user_id:    null,
+      email:      userEmail || null,
+      amount_usd: tierInfo.amount_usd,
+      tier:       tierInfo.tier,
+      credits:    tierInfo.credits,
+      reference:  reference || null,
+      status:     'confirmed',
+    };
+    const res = await axios.post(
+      `${SUPABASE_URL}/rest/v1/payments`,
+      body,
+      {
+        headers: {
+          'apikey':        SUPABASE_SERVICE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'Content-Type':  'application/json',
+          'Prefer':        'return=minimal',
+        },
+      }
+    );
+    log('Supabase payment recorded', { status: res.status, reference, tier: tierInfo.tier });
+  } catch (err) {
+    console.error('[Supabase] Failed to record payment:', err?.response?.data || err.message);
+  }
 }
 
 // ---------- Create order ----------
@@ -89,7 +149,6 @@ app.post('/create-paynow-order', async (req, res) => {
     let paynowUrl = PN_REDIRECT_URL;
 
     if (isExpress) {
-      // Express checkout: validate and normalize phone
       const normPhone = normalizeMsisdn(phone);
       if (!normPhone || !/^263\d{9}$/.test(normPhone)) {
         return res.status(400).json({
@@ -97,11 +156,9 @@ app.post('/create-paynow-order', async (req, res) => {
           error: 'Valid wallet number required (e.g. 26377xxxxxxx — 12 digits total)'
         });
       }
-      // Per PayNow docs: authemail for express = mobilenumber@yoursite.com
       payload.authemail = `${normPhone}@${BRAND_DOMAIN}`;
       payload.method    = methodLower;
       payload.phone     = normPhone;
-      // Express uses the remotetransaction endpoint
       paynowUrl = PN_EXPRESS_URL;
     }
 
@@ -145,16 +202,32 @@ app.post('/create-paynow-order', async (req, res) => {
 
 // ---------- Poll endpoint ----------
 app.get('/poll', async (req, res) => {
-  const { pollUrl } = req.query;
+  const { pollUrl, reference, amount, email } = req.query;
   if (!pollUrl) return res.status(400).json({ success: false, error: 'pollUrl is required' });
 
   try {
     const pnRes = await axios.get(pollUrl);
     const raw = pnRes.data;
     log('Poll raw', raw);
+
     const p      = new URLSearchParams(raw);
-    const status = p.get('status')    || p.get('Status')    || '';
-    const ref    = p.get('reference') || p.get('Reference') || '';
+    const status = (p.get('status') || p.get('Status') || '').toLowerCase();
+    const ref    = reference || p.get('reference') || p.get('Reference') || '';
+    const amt    = amount    || p.get('amount')    || p.get('Amount')    || '0';
+
+    // Write to Supabase the moment PayNow confirms — server-side, reliable
+    if (status === 'paid') {
+      const tierInfo = resolveTier(ref, amt);
+      if (tierInfo) {
+        await recordPaymentToSupabase({
+          reference:  ref,
+          amount:     amt,
+          tierInfo,
+          userEmail:  email || null,
+        });
+      }
+    }
+
     return res.json({ success: true, status, reference: ref });
   } catch (e) {
     console.error('[Paynow] Poll error:', e?.response?.data || e.message);
